@@ -1,0 +1,127 @@
+/*
+ * Design-system baseline (T016). Neutral, theme-aware tokens established here; the
+ * impeccable / taste-skill polish passes (T049–T050) refine on top of these — they do not
+ * redefine the token names.
+ */
+:root {
+  --uc-bg: #ffffff;
+  --uc-surface: #f6f7f9;
+  --uc-border: #e2e5ea;
+  --uc-text: #16181d;
+  --uc-text-muted: #5b616e;
+  --uc-primary: #4f46e5;
+  --uc-primary-contrast: #ffffff;
+  --uc-success: #15803d;
+  --uc-warning: #b45309;
+  --uc-danger: #b91c1c;
+  --uc-radius: 10px;
+  --uc-space: 8px;
+  --uc-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --uc-bg: #0f1115;
+    --uc-surface: #171a21;
+    --uc-border: #2a2f3a;
+    --uc-text: #e8eaed;
+    --uc-text-muted: #9aa1ad;
+    --uc-primary: #818cf8;
+    --uc-primary-contrast: #0f1115;
+    --uc-success: #4ade80;
+    --uc-warning: #fbbf24;
+    --uc-danger: #f87171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--uc-bg);
+  color: var(--uc-text);
+  font-family: var(--uc-font);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--uc-primary);
+}
+
+.uc-container {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: calc(var(--uc-space) * 4);
+}
+
+.uc-card {
+  background: var(--uc-surface);
+  border: 1px solid var(--uc-border);
+  border-radius: var(--uc-radius);
+  padding: calc(var(--uc-space) * 3);
+}
+
+.uc-warning {
+  border-left: 3px solid var(--uc-warning);
+  padding-left: calc(var(--uc-space) * 2);
+  color: var(--uc-warning);
+}
+
+/* Controls: consistent, accessible focus + hover/disabled states. */
+button {
+  font: inherit;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--uc-radius);
+  background: var(--uc-primary);
+  color: var(--uc-primary-contrast);
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--uc-text);
+  background: var(--uc-bg);
+  border: 1px solid var(--uc-border);
+  border-radius: var(--uc-radius);
+}
+
+textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--uc-primary);
+  outline-offset: 2px;
+}
+
+h1 {
+  font-size: 1.6rem;
+}
+h2 {
+  font-size: 1.15rem;
+}
+
+@media (max-width: 640px) {
+  .uc-container {
+    padding: calc(var(--uc-space) * 2);
+  }
+}

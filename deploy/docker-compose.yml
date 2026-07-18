@@ -1,0 +1,45 @@
+# Minimal, self-contained stack: `docker compose up` from this directory (after creating
+# deploy/.env from .env.example) is all that is needed. One user per deployment.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: uc
+      POSTGRES_PASSWORD: uc
+      POSTGRES_DB: uc
+    volumes:
+      - uc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    environment:
+      DATABASE_URL: postgres://uc:uc@postgres:5432/uc
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in deploy/.env}
+      PORT: 8080
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    environment:
+      DATABASE_URL: postgres://uc:uc@postgres:5432/uc
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in deploy/.env}
+    # x86_64 host required (CloakBrowser binary). Runs the browser headed under Xvfb.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  uc_pgdata:

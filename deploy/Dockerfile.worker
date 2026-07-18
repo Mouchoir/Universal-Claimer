@@ -1,0 +1,38 @@
+# Automation worker. Runs CloakBrowser (source-patched Chromium) HEADED under Xvfb on a
+# headless host. x86_64 only.
+FROM node:20-bookworm-slim AS build
+RUN corepack enable
+WORKDIR /app
+COPY . .
+RUN corepack pnpm install --frozen-lockfile
+# Building the worker also builds its referenced workspace packages (tsc -b).
+RUN corepack pnpm --filter @uc/worker build
+
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+RUN corepack enable
+
+# System deps: Xvfb (virtual display) + the shared libs Chromium needs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb ca-certificates fonts-liberation \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app ./
+
+# Pre-download the CloakBrowser binary at build time so the finished image ships with it and
+# the first claim isn't slowed by a ~200MB download. The binary is fetched from CloakHQ's
+# official source by the operator's own build (not redistributed by this project); the free
+# v146 binary is licensed for personal + commercial self-hosted use.
+ENV CLOAKBROWSER_CACHE_DIR=/opt/cloakbrowser
+# For CloakBrowser Pro (latest Chromium), pass a license key at build:
+#   docker build --build-arg CLOAKBROWSER_LICENSE_KEY=cb_xxx ...
+ARG CLOAKBROWSER_LICENSE_KEY=""
+RUN CLOAKBROWSER_LICENSE_KEY="$CLOAKBROWSER_LICENSE_KEY" \
+    corepack pnpm --filter @uc/connectors exec cloakbrowser install
+
+ENV DISPLAY=:99
+# xvfb-run provides the virtual display so CloakBrowser runs headed on a headless host.
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1280x800x24", "node", "apps/worker/dist/index.js"]

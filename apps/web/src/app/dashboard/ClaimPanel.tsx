@@ -1,0 +1,114 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+interface Account {
+  id: string;
+  serviceId: string;
+  method: string;
+  status: string;
+}
+interface Job {
+  id: string;
+  serviceId: string;
+  state: string;
+  outcome: string | null;
+  summary: string | null;
+}
+
+const OUTCOME_COLOR: Record<string, string> = {
+  claimed: "var(--uc-success)",
+  nothing_to_claim: "var(--uc-text-muted)",
+  failed: "var(--uc-danger)",
+  reauth_needed: "var(--uc-warning)",
+};
+
+export function ClaimPanel() {
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((d) => setAccounts(d.accounts ?? []))
+      .catch(() => setAccounts([]));
+
+    const es = new EventSource("/api/events");
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "jobs") setJobs(data.jobs ?? []);
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    return () => es.close();
+  }, []);
+
+  async function runClaim(accountId: string) {
+    setMsg(null);
+    const res = await fetch(`/api/accounts/${accountId}/claim`, { method: "POST" });
+    if (res.status === 409) setMsg("A claim is already running for this account.");
+    else if (!res.ok) setMsg("Could not start the claim.");
+  }
+
+  async function resume(jobId: string) {
+    setMsg(null);
+    const res = await fetch(`/api/jobs/${jobId}/human-action`, { method: "POST" });
+    if (!res.ok) setMsg("Could not resume the job.");
+  }
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h2>Connected accounts</h2>
+      {accounts.length === 0 ? (
+        <p style={{ color: "var(--uc-text-muted)" }}>No accounts connected yet.</p>
+      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {accounts.map((a) => (
+            <div
+              key={a.id}
+              className="uc-card"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+            >
+              <div>
+                <strong>{a.serviceId}</strong>
+                <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
+                  {a.method} — {a.status}
+                </div>
+              </div>
+              <button onClick={() => runClaim(a.id)}>Run claim</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {msg && <p style={{ color: "var(--uc-warning)" }}>{msg}</p>}
+
+      <h2 style={{ marginTop: 24 }}>Recent jobs</h2>
+      {jobs.length === 0 ? (
+        <p style={{ color: "var(--uc-text-muted)" }}>No jobs yet.</p>
+      ) : (
+        <ul>
+          {jobs.map((j) => (
+            <li key={j.id}>
+              <strong>{j.serviceId}</strong> — {j.state}
+              {j.outcome && (
+                <span style={{ color: OUTCOME_COLOR[j.outcome] ?? "inherit" }}> ({j.outcome})</span>
+              )}
+              {j.summary && <span style={{ color: "var(--uc-text-muted)" }}> — {j.summary}</span>}
+              {j.state === "requires_human_action" && (
+                <div style={{ marginTop: 4 }}>
+                  <span className="uc-warning">
+                    Complete the challenge in your own browser, then resume.
+                  </span>{" "}
+                  <button onClick={() => resume(j.id)}>I&apos;ve solved it — resume</button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
