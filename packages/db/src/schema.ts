@@ -1,0 +1,160 @@
+import {
+  boolean,
+  customType,
+  jsonb,
+  pgTable,
+  smallint,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+/** Raw bytea column for encrypted blobs. */
+const bytea = customType<{ data: Buffer; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+/**
+ * Schema for the single-user deployment (data-model.md). No tenant/user_id columns and no
+ * RLS: the isolation boundary is the deployment itself.
+ */
+
+export const admin = pgTable(
+  "admin",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // Constant column with a unique index enforces a single admin row.
+    singleton: boolean("singleton").notNull().default(true),
+    passwordHash: text("password_hash").notNull(),
+    recoveryEnabled: boolean("recovery_enabled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ singletonUq: uniqueIndex("admin_singleton_uq").on(t.singleton) }),
+);
+
+export const securityQuestion = pgTable("security_question", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  position: smallint("position").notNull(), // 1..3
+  question: text("question").notNull(),
+  answerHash: text("answer_hash").notNull(),
+});
+
+export const service = pgTable("service", {
+  id: text("id").primaryKey(), // e.g. "epic"
+  displayName: text("display_name").notNull(),
+  connectorVersion: text("connector_version").notNull(),
+  tosWarning: text("tos_warning").notNull(),
+  methods: text("methods").array().notNull(),
+});
+
+export const connectedAccount = pgTable(
+  "connected_account",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    serviceId: text("service_id")
+      .notNull()
+      .references(() => service.id),
+    method: text("method").notNull(), // session_import | credential_totp
+    secretCiphertext: bytea("secret_ciphertext").notNull(),
+    secretDataKey: bytea("secret_data_key").notNull(),
+    fingerprint: jsonb("fingerprint").notNull(),
+    status: text("status").notNull().default("connected"), // connected | needs_reauth
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // One account per service (FR-006a).
+  (t) => ({ serviceUq: uniqueIndex("connected_account_service_uq").on(t.serviceId) }),
+);
+
+export const consentRecord = pgTable("consent_record", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => service.id),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  tosWarningSnapshot: text("tos_warning_snapshot").notNull(),
+});
+
+export const job = pgTable("job", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  connectedAccountId: uuid("connected_account_id")
+    .notNull()
+    .references(() => connectedAccount.id, { onDelete: "cascade" }),
+  // queued | running | requires_human_action | succeeded | failed
+  state: text("state").notNull().default("queued"),
+  // claimed | nothing_to_claim | failed | reauth_needed (null until terminal)
+  outcome: text("outcome"),
+  summary: text("summary"), // human-readable, never secrets
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const notificationTarget = pgTable(
+  "notification_target",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    singleton: boolean("singleton").notNull().default(true),
+    kind: text("kind").notNull(), // discord | telegram | ntfy
+    configCiphertext: bytea("config_ciphertext").notNull(),
+    configDataKey: bytea("config_data_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ singletonUq: uniqueIndex("notification_target_singleton_uq").on(t.singleton) }),
+);
+
+/**
+ * Per-connector run-outcome accounting feeding the health monitor (T012a / Principle I):
+ * a rolling record of runs so the monitor can compute a failure rate and auto-disable a
+ * connector whose UI has drifted.
+ */
+export const connectorRun = pgTable("connector_run", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  serviceId: text("service_id").notNull(),
+  connectorVersion: text("connector_version").notNull(),
+  success: boolean("success").notNull(),
+  outcome: text("outcome").notNull(),
+  ranAt: timestamp("ran_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const connectorState = pgTable("connector_state", {
+  serviceId: text("service_id").primaryKey(),
+  disabled: boolean("disabled").notNull().default(false),
+  disabledReason: text("disabled_reason"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Assisted-login session: the operator logs in inside the instance-controlled browser and
+ * cookies are captured automatically (docs/design/assisted-login.md). `frame` holds the
+ * latest transient screenshot relayed to the dashboard (headless mode).
+ */
+export const loginSession = pgTable("login_session", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  serviceId: text("service_id")
+    .notNull()
+    .references(() => service.id),
+  // pending | awaiting_user | connected | timed_out | failed
+  status: text("status").notNull().default("pending"),
+  frame: bytea("frame"), // latest screenshot (transient; cleared when the session ends)
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Operator input events for a login session (dashboard → worker relay). FIFO by createdAt. */
+export const loginInput = pgTable("login_input", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => loginSession.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // click | type | key | scroll
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+});
+
+/** Postgres channel used for LISTEN/NOTIFY job-event relay to the web app's SSE stream. */
+export const JOB_EVENTS_CHANNEL = "job_events";

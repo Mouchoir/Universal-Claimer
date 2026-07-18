@@ -1,0 +1,19 @@
+# Web portal (Next.js standalone). Multi-stage: build with pnpm, run a slim runtime.
+FROM node:20-bookworm-slim AS build
+RUN corepack enable
+WORKDIR /app
+COPY . .
+RUN corepack pnpm install --frozen-lockfile
+ENV NEXT_OUTPUT=standalone
+RUN corepack pnpm --filter @uc/web build
+
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+# Next standalone output bundles the server + traced dependencies.
+COPY --from=build /app/apps/web/.next/standalone ./
+COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
+EXPOSE 8080
+ENV PORT=8080
+# Migrations are applied by the app on startup; see @uc/db runMigrations.
+CMD ["node", "apps/web/server.js"]

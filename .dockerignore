@@ -1,0 +1,14 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+coverage/
+.git/
+*.log
+.env
+.env.*
+!.env.example
+specs/
+docs/
+**/*.test.ts

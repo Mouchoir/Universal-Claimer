@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/connectors" },
+    { "path": "./packages/db" },
+    { "path": "./packages/notifications" },
+    { "path": "./apps/worker" }
+  ]
+}
