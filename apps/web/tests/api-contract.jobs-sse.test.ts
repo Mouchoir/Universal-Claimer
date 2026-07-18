@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { jobViewSchema, loginInputSchema, sseJobsEventSchema } from "../src/server/schemas.js";
+import {
+  jobViewSchema,
+  loginInputSchema,
+  scheduleSchema,
+  sseJobsEventSchema,
+} from "../src/server/schemas.js";
 
 /** Contract test for the jobs API + SSE event payload shapes (US3 / T035a). */
 describe("jobs & SSE payload contract", () => {
@@ -41,5 +46,23 @@ describe("jobs & SSE payload contract", () => {
     expect(loginInputSchema.safeParse({ kind: "key", key: "Enter" }).success).toBe(true);
     expect(loginInputSchema.safeParse({ kind: "click", x: 10 }).success).toBe(false);
     expect(loginInputSchema.safeParse({ kind: "bogus" }).success).toBe(false);
+  });
+
+  it("validates schedules and requires dayOfWeek for weekly", () => {
+    expect(
+      scheduleSchema.safeParse({ frequency: "daily", hour: 9, minute: 0, enabled: true }).success,
+    ).toBe(true);
+    expect(
+      scheduleSchema.safeParse({ frequency: "weekly", hour: 9, minute: 0, dayOfWeek: 1, enabled: true })
+        .success,
+    ).toBe(true);
+    // weekly without dayOfWeek is rejected
+    expect(
+      scheduleSchema.safeParse({ frequency: "weekly", hour: 9, minute: 0, enabled: true }).success,
+    ).toBe(false);
+    // out-of-range hour
+    expect(
+      scheduleSchema.safeParse({ frequency: "daily", hour: 24, minute: 0, enabled: true }).success,
+    ).toBe(false);
   });
 });

@@ -181,6 +181,19 @@ page title is a hardcoded placeholder ("the service").
 Note: spec-kit commands in this repo are GitHub Copilot prompts under `.github/prompts/`;
 the PowerShell scripts under `.specify/scripts/powershell/` do the file scaffolding.
 
+## Feature 002 — Automatic scheduling (branch `feat/002-scheduling`)
+
+Recurring per-account claim scheduling (spec/plan/tasks under `specs/002-scheduling/`).
+`schedule` table (one per account, cascade; migration 0002), `computeNextRun`/`jitterSeconds`
+in `@uc/core` (shared by web + worker), worker `runScheduler` orchestration driven by a
+pg-boss cron `boss.schedule(SCHEDULER_QUEUE, "* * * * *")` — due schedules enqueue a claim via
+the existing pipeline (skips accounts with an active claim; advances always so no backlog;
+jittered startAfter for Principle VII). API `GET/PUT/DELETE /api/accounts/[id]/schedule`,
+dashboard `ScheduleEditor` (daily/weekly + time). Connector-agnostic. **99 tests green,
+`tsc -b` + web typecheck + next build clean.** Not yet run live (scheduler tick needs the
+running worker + Postgres). Git: committed on the feature branch; `main` is the stable
+baseline.
+
 ## Legal / TOS reminder
 
 Automating these platforms may violate their Terms of Service and can get the operator's own

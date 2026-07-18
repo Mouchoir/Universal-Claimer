@@ -1,7 +1,9 @@
 import {
   AntiCaptchaSolver,
   NullCaptchaSolver,
+  computeNextRun,
   createLogger,
+  jitterSeconds,
   loadConfig,
   loadMasterKey,
   openSecretString,
@@ -19,25 +21,34 @@ import { CloakBrowserFactory } from "@uc/connectors/browser";
 import {
   CLAIM_QUEUE,
   LOGIN_QUEUE,
+  SCHEDULER_QUEUE,
+  claimSendOptions,
   createDb,
+  createJob,
   createQueue,
   evaluateConnectorHealth,
   finishJob,
+  getAccount,
   getAccountSecret,
   getNotificationTarget,
+  hasActiveJobForAccount,
+  listDueSchedules,
   markRequiresHumanAction,
   markRunning,
+  markScheduleRan,
   notifyJobEvent,
   recordConnectorRun,
   updateAccountStatus,
   type ClaimJobData,
   type LoginJobData,
+  type ScheduleRow,
 } from "@uc/db";
 import { deliver, type NotificationKind } from "@uc/notifications";
 import { reconcileInterruptedJobs } from "./reconcile.js";
 import { runClaim, type ClaimJobDeps, type LoadedAccount } from "./run-claim.js";
 import { runLogin } from "./run-login.js";
 import { makeLoginDeps } from "./login.js";
+import { runScheduler, type SchedulerDeps } from "./run-scheduler.js";
 
 const log = createLogger({ name: "worker" });
 
@@ -143,6 +154,34 @@ export async function main(): Promise<void> {
       await runLogin(loginDeps, pgJob.data);
     }
   });
+
+  // Scheduler: a pg-boss cron fires the tick every minute; the tick dispatches due claims.
+  const schedulerDeps: SchedulerDeps = {
+    now: () => new Date(),
+    listDue: (now) => listDueSchedules(db, now),
+    hasActiveJob: (accountId) => hasActiveJobForAccount(db, accountId),
+    enqueueClaim: async (accountId) => {
+      const account = await getAccount(db, accountId);
+      if (!account) return false;
+      const jobId = await createJob(db, accountId);
+      await boss.send(
+        CLAIM_QUEUE,
+        { jobId, connectedAccountId: accountId, serviceId: account.serviceId },
+        { ...claimSendOptions(accountId), startAfter: jitterSeconds() },
+      );
+      await notifyJobEvent(pool);
+      return true;
+    },
+    advance: async (s: ScheduleRow, now: Date) => {
+      const next = computeNextRun(s.frequency, s.hour, s.minute, s.dayOfWeek, now);
+      await markScheduleRan(db, s.id, now, next);
+    },
+  };
+  await boss.work(SCHEDULER_QUEUE, async () => {
+    const dispatched = await runScheduler(schedulerDeps);
+    if (dispatched > 0) log.info("scheduler dispatched claims", { count: dispatched });
+  });
+  await boss.schedule(SCHEDULER_QUEUE, "* * * * *");
 
   log.info("worker started", { queue: CLAIM_QUEUE, browser: "cloakbrowser" });
 

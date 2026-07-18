@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ScheduleEditor } from "./ScheduleEditor";
 
 interface Account {
   id: string;
@@ -67,18 +68,17 @@ export function ClaimPanel() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {accounts.map((a) => (
-            <div
-              key={a.id}
-              className="uc-card"
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-            >
-              <div>
-                <strong>{a.serviceId}</strong>
-                <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
-                  {a.method} — {a.status}
+            <div key={a.id} className="uc-card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong>{a.serviceId}</strong>
+                  <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
+                    {a.method} — {a.status}
+                  </div>
                 </div>
+                <button onClick={() => runClaim(a.id)}>Run claim</button>
               </div>
-              <button onClick={() => runClaim(a.id)}>Run claim</button>
+              <ScheduleEditor accountId={a.id} />
             </div>
           ))}
         </div>

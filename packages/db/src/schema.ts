@@ -128,6 +128,30 @@ export const connectorState = pgTable("connector_state", {
 });
 
 /**
+ * Recurring claim schedule for a connected account (feature 002). At most one per account;
+ * removed with the account. Times are in the deployment's local timezone.
+ */
+export const schedule = pgTable(
+  "schedule",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    connectedAccountId: uuid("connected_account_id")
+      .notNull()
+      .references(() => connectedAccount.id, { onDelete: "cascade" }),
+    frequency: text("frequency").notNull(), // daily | weekly
+    hour: smallint("hour").notNull(), // 0..23
+    minute: smallint("minute").notNull(), // 0..59
+    dayOfWeek: smallint("day_of_week"), // 0..6 (Sun..Sat); null for daily
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ accountUq: uniqueIndex("schedule_account_uq").on(t.connectedAccountId) }),
+);
+
+/**
  * Assisted-login session: the operator logs in inside the instance-controlled browser and
  * cookies are captured automatically (docs/design/assisted-login.md). `frame` holds the
  * latest transient screenshot relayed to the dashboard (headless mode).

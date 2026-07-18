@@ -9,5 +9,6 @@ export * from "./accounts.js";
 export * from "./services.js";
 export * from "./jobs.js";
 export * from "./login.js";
+export * from "./schedule.js";
 export * from "./seed.js";
 export { runMigrations } from "./migrate.js";
