@@ -38,6 +38,19 @@ export const sseJobsEventSchema = z.object({
   jobs: z.array(jobViewSchema),
 });
 
+/** Set/replace a recurring schedule for an account (feature 002). */
+export const scheduleSchema = z
+  .object({
+    frequency: z.enum(["daily", "weekly"]),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+    dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    enabled: z.boolean(),
+  })
+  .refine((d) => d.frequency !== "weekly" || d.dayOfWeek != null, {
+    message: "weekly schedule requires a dayOfWeek (0-6)",
+  });
+
 /** An operator input event relayed to a login session (assisted login). */
 export const loginInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("click"), x: z.number(), y: z.number() }),

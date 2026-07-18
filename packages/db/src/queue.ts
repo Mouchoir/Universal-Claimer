@@ -4,6 +4,7 @@ import { JOB_EVENTS_CHANNEL } from "./schema.js";
 
 export const CLAIM_QUEUE = "claim";
 export const LOGIN_QUEUE = "login";
+export const SCHEDULER_QUEUE = "scheduler-tick";
 
 export interface ClaimJobData {
   jobId: string;
@@ -21,7 +22,7 @@ export async function createQueue(databaseUrl: string): Promise<PgBoss> {
   const boss = new PgBoss(databaseUrl);
   await boss.start();
   // pg-boss v10 requires queues to exist before send()/work(). Idempotent.
-  for (const q of [CLAIM_QUEUE, LOGIN_QUEUE]) {
+  for (const q of [CLAIM_QUEUE, LOGIN_QUEUE, SCHEDULER_QUEUE]) {
     try {
       await boss.createQueue(q);
     } catch {
