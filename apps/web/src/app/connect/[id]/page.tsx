@@ -13,6 +13,7 @@ export default function ConnectPage() {
     { key: string; label: string; required: boolean; placeholder?: string }[]
   >([]);
   const [config, setConfig] = useState<Record<string, string>>({});
+  const [proxy, setProxy] = useState("");
   const [consented, setConsented] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [method, setMethod] = useState<"session_import" | "credential_totp">("session_import");
@@ -51,7 +52,7 @@ export default function ConnectPage() {
       const res = await fetch(`/api/services/${serviceId}/login-session`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ config, proxy: proxy || undefined }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -70,7 +71,7 @@ export default function ConnectPage() {
     setError(null);
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { serviceId, method, config };
+      const body: Record<string, unknown> = { serviceId, method, config, proxy: proxy || undefined };
       if (method === "session_import") body.cookiesText = cookiesText;
       else Object.assign(body, { email, password, totpSeed: totpSeed || undefined });
 
@@ -130,6 +131,21 @@ export default function ConnectPage() {
               ))}
             </div>
           )}
+
+          <div className="uc-card" style={{ marginTop: 16, display: "grid", gap: 4 }}>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span>Proxy (optional)</span>
+              <input
+                value={proxy}
+                placeholder="http://user:pass@host:port or socks5://host:port"
+                onChange={(e) => setProxy(e.target.value)}
+              />
+            </label>
+            <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>
+              Route this account through its own proxy so accounts don&apos;t share one IP.
+              Stored encrypted. Leave empty to use this host&apos;s IP.
+            </span>
+          </div>
 
           <div className="uc-card" style={{ marginTop: 16, display: "grid", gap: 8 }}>
             <strong>Log in for me (recommended)</strong>

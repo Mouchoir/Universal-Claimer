@@ -63,6 +63,9 @@ export const connectedAccount = pgTable(
     fingerprint: jsonb("fingerprint").notNull(),
     // Non-secret per-account connector config (e.g. { channel } for Twitch). Plain JSON.
     config: jsonb("config").notNull().default({}),
+    // Optional per-account proxy URL, envelope-encrypted (may embed credentials).
+    proxyCiphertext: bytea("proxy_ciphertext"),
+    proxyDataKey: bytea("proxy_data_key"),
     status: text("status").notNull().default("connected"), // connected | needs_reauth
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -167,6 +170,9 @@ export const loginSession = pgTable("login_session", {
   status: text("status").notNull().default("pending"),
   // Per-account connector config carried through assisted login (e.g. { channel }).
   config: jsonb("config").notNull().default({}),
+  // Optional proxy (encrypted) carried through assisted login onto the created account.
+  proxyCiphertext: bytea("proxy_ciphertext"),
+  proxyDataKey: bytea("proxy_data_key"),
   frame: bytea("frame"), // latest screenshot (transient; cleared when the session ends)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -16,6 +16,8 @@ export interface LoginSessionRow {
   serviceId: string;
   status: LoginStatus;
   config: Record<string, string>;
+  proxyCiphertext: Buffer | null;
+  proxyDataKey: Buffer | null;
 }
 
 export interface InputEvent {
@@ -23,14 +25,26 @@ export interface InputEvent {
   payload: Record<string, unknown>;
 }
 
+export interface NewLoginSession {
+  config?: Record<string, string>;
+  proxyCiphertext?: Buffer | null;
+  proxyDataKey?: Buffer | null;
+}
+
 export async function createLoginSession(
   db: Database,
   serviceId: string,
-  config: Record<string, string> = {},
+  opts: NewLoginSession = {},
 ): Promise<string> {
   const [row] = await db
     .insert(loginSession)
-    .values({ serviceId, status: "pending", config })
+    .values({
+      serviceId,
+      status: "pending",
+      config: opts.config ?? {},
+      proxyCiphertext: opts.proxyCiphertext ?? null,
+      proxyDataKey: opts.proxyDataKey ?? null,
+    })
     .returning({ id: loginSession.id });
   return row!.id;
 }
@@ -43,6 +57,8 @@ export async function getLoginSession(db: Database, id: string): Promise<LoginSe
         serviceId: row.serviceId,
         status: row.status as LoginStatus,
         config: (row.config as Record<string, string>) ?? {},
+        proxyCiphertext: row.proxyCiphertext ?? null,
+        proxyDataKey: row.proxyDataKey ?? null,
       }
     : null;
 }

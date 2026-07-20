@@ -223,6 +223,18 @@ Registered in `defaultRegistry()`; `microsoft` service seeded; docs
 typecheck + next build clean.** Not run live (selectors best-effort). Branch chain:
 main → 002 → 003 → 004.
 
+## Feature 005 — Per-account proxy & IP isolation (branch `feat/005-proxies`)
+
+Optional per-account proxy (bring-your-own) so accounts don't share an IP (Principle VII, was
+deferred at MVP). `spec`/`tasks` under `specs/005-proxies/`. `@uc/core` `isValidProxyUrl` +
+`maskProxy` (tested). Encrypted proxy columns on `connected_account` + `login_session`
+(migration 0004) — proxy is sealed like the secret (may contain creds; never plaintext/logs).
+`CloakBrowserFactory` gains a `proxy` option; the worker builds a **fresh factory per run**
+with that account's decrypted proxy (claims + assisted login) — connectors unchanged
+(Principle I). Connect + login-session APIs validate + seal the proxy; connect UI has an
+optional proxy field. Docs `docs/operations/proxies.md`. **119 tests green, tsc -b + web
+typecheck + next build clean.** Not run live. Branch chain: main → 002 → 003 → 004 → 005.
+
 ## Legal / TOS reminder
 
 Automating these platforms may violate their Terms of Service and can get the operator's own

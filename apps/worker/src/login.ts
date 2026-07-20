@@ -97,6 +97,8 @@ export function makeLoginDeps(args: {
         secretDataKey: sealed.wrappedDataKey,
         fingerprint: defaultFingerprint(),
         config: loginSession?.config ?? {},
+        proxyCiphertext: loginSession?.proxyCiphertext ?? null,
+        proxyDataKey: loginSession?.proxyDataKey ?? null,
       });
     },
     setStatus: async (sessionId, status) => setLoginStatus(db, sessionId, status),

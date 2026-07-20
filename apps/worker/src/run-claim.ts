@@ -27,6 +27,8 @@ export interface LoadedAccount {
   secretJson: string;
   /** Per-account connector config (e.g. { channel } for Twitch). */
   config: Record<string, string>;
+  /** Decrypted per-account proxy URL, if any (Principle VII). */
+  proxy?: string;
 }
 
 /**
@@ -44,7 +46,8 @@ export interface ClaimJobDeps {
   recordRun(serviceId: string, version: string, success: boolean, outcome: ClaimOutcome): Promise<void>;
   /** Best-effort operator notification (portal SSE + optional webhook). */
   notify(message: string): Promise<void>;
-  makeContext(): ConnectorContext;
+  /** Build a connector context whose browser uses the given per-account proxy (if any). */
+  makeContext(proxy?: string): ConnectorContext;
 }
 
 function toAuthInput(method: LoadedAccount["method"], secretJson: string): AuthInput {
@@ -76,7 +79,7 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
 
   const connector = deps.getConnector(account.serviceId);
   const input = toAuthInput(account.method, account.secretJson);
-  const ctx = deps.makeContext();
+  const ctx = deps.makeContext(account.proxy);
 
   let result: { outcome: ClaimOutcome; summary: string };
   try {

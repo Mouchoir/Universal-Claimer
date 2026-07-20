@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isValidProxyUrl, sealSecret } from "@uc/core";
 import { defaultRegistry } from "@uc/connectors";
 import {
   LOGIN_QUEUE,
@@ -8,7 +9,7 @@ import {
   hasConsent,
   loginSendOptions,
 } from "@uc/db";
-import { getDb, getQueue } from "@/server/context";
+import { getDb, getMasterKey, getQueue } from "@/server/context";
 import { jsonError } from "@/server/http";
 import { missingConfigKeys } from "@/server/schemas";
 import { isAuthenticated } from "@/server/session-cookie";
@@ -23,7 +24,10 @@ export async function POST(
 ): Promise<NextResponse> {
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
 
-  const body = (await req.json().catch(() => ({}))) as { config?: Record<string, string> };
+  const body = (await req.json().catch(() => ({}))) as {
+    config?: Record<string, string>;
+    proxy?: string;
+  };
   const config = body.config ?? {};
 
   const { db } = getDb();
@@ -40,7 +44,19 @@ export async function POST(
     return jsonError("CONFIG_REQUIRED", `Missing required config: ${missing.join(", ")}`, 400);
   }
 
-  const sessionId = await createLoginSession(db, service.id, config);
+  let proxySeal: { ciphertext: Buffer; wrappedDataKey: Buffer } | null = null;
+  if (body.proxy && body.proxy.trim()) {
+    if (!isValidProxyUrl(body.proxy.trim())) {
+      return jsonError("INVALID_PROXY", "Proxy must be http(s)/socks with host and port.", 400);
+    }
+    proxySeal = sealSecret(body.proxy.trim(), getMasterKey());
+  }
+
+  const sessionId = await createLoginSession(db, service.id, {
+    config,
+    proxyCiphertext: proxySeal?.ciphertext ?? null,
+    proxyDataKey: proxySeal?.wrappedDataKey ?? null,
+  });
   const boss = await getQueue();
   await boss.send(LOGIN_QUEUE, { sessionId, serviceId: service.id }, loginSendOptions(sessionId));
 

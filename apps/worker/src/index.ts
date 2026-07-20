@@ -29,6 +29,7 @@ import {
   finishJob,
   getAccount,
   getAccountSecret,
+  getLoginSession,
   getNotificationTarget,
   hasActiveJobForAccount,
   listDueSchedules,
@@ -62,24 +63,34 @@ export async function main(): Promise<void> {
     ? new AntiCaptchaSolver({ apiKey: process.env.ANTI_CAPTCHA_KEY })
     : new NullCaptchaSolver();
 
-  // CloakBrowser manages its own binary (auto-downloaded, or pre-baked in the Docker image).
-  const browserFactory = new CloakBrowserFactory({
-    headed: true,
-    ...(process.env.CLOAKBROWSER_LICENSE_KEY
-      ? { licenseKey: process.env.CLOAKBROWSER_LICENSE_KEY }
-      : {}),
-  });
+  const licenseKey = process.env.CLOAKBROWSER_LICENSE_KEY;
 
-  const makeContext = (): ConnectorContext => ({
-    browser: browserFactory,
+  // CloakBrowser manages its own binary (auto-downloaded, or pre-baked in the Docker image).
+  // A fresh factory per run bakes in that account's proxy (Principle VII: per-account IP).
+  const makeBrowser = (proxy?: string): CloakBrowserFactory =>
+    new CloakBrowserFactory({
+      headed: true,
+      ...(licenseKey ? { licenseKey } : {}),
+      ...(proxy ? { proxy } : {}),
+    });
+
+  const makeContext = (proxy?: string): ConnectorContext => ({
+    browser: makeBrowser(proxy),
     captcha,
     totp: generateTotp,
     emit: (event) => {
-      // US3: surface events to logs. US4 wires pause/resume + webhook delivery.
       log.info("connector event", { event: event.type });
     },
     log,
   });
+
+  const openProxy = (
+    ciphertext: Buffer | null,
+    dataKey: Buffer | null,
+  ): string | undefined => {
+    if (!ciphertext || !dataKey) return undefined;
+    return openSecretString({ ciphertext, wrappedDataKey: dataKey }, masterKey);
+  };
 
   const deps: ClaimJobDeps = {
     getConnector: (serviceId) => registry.require(serviceId),
@@ -96,6 +107,7 @@ export async function main(): Promise<void> {
         fingerprint: (row.fingerprint as Fingerprint) ?? defaultFingerprint(),
         secretJson,
         config: row.config ?? {},
+        proxy: openProxy(row.proxyCiphertext, row.proxyDataKey),
       };
     },
     markRunning: async (jobId) => {
@@ -142,11 +154,13 @@ export async function main(): Promise<void> {
 
   await boss.work<LoginJobData>(LOGIN_QUEUE, async (pgJobs) => {
     for (const pgJob of pgJobs) {
+      const sess = await getLoginSession(db, pgJob.data.sessionId);
+      const proxy = sess ? openProxy(sess.proxyCiphertext, sess.proxyDataKey) : undefined;
       const loginDeps = makeLoginDeps({
         db,
         registry,
-        browser: browserFactory,
-        ctx: makeContext(),
+        browser: makeBrowser(proxy),
+        ctx: makeContext(proxy),
         masterKey,
         job: pgJob.data,
       });

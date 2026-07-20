@@ -10,6 +10,8 @@ export interface CloakBrowserOptions {
   headed?: boolean;
   /** CloakBrowser Pro license key. The free v146 binary needs none. */
   licenseKey?: string;
+  /** Optional proxy URL for this account (http(s)/socks). Injected by the worker. */
+  proxy?: string;
 }
 
 /**
@@ -25,6 +27,7 @@ export class CloakBrowserFactory implements BrowserFactory {
     const context = await launchContext({
       headless: this.opts.headed === false,
       ...(this.opts.licenseKey ? { licenseKey: this.opts.licenseKey } : {}),
+      ...(this.opts.proxy ? { proxy: this.opts.proxy } : {}),
       timezone: fingerprint.timezoneId,
       locale: fingerprint.locale,
       userAgent: fingerprint.userAgent,

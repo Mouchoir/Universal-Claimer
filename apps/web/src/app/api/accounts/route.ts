@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sealSecret } from "@uc/core";
+import { isValidProxyUrl, sealSecret } from "@uc/core";
 import {
   defaultFingerprint,
   defaultRegistry,
@@ -88,6 +88,15 @@ export async function POST(req: Request): Promise<NextResponse> {
     });
   }
 
+  // Optional per-account proxy (sealed like the secret).
+  let proxySeal: { ciphertext: Buffer; wrappedDataKey: Buffer } | null = null;
+  if (input.proxy && input.proxy.trim()) {
+    if (!isValidProxyUrl(input.proxy.trim())) {
+      return jsonError("INVALID_PROXY", "Proxy must be http(s)/socks with host and port.", 400);
+    }
+    proxySeal = sealSecret(input.proxy.trim(), getMasterKey());
+  }
+
   const sealed = sealSecret(payload, getMasterKey());
   const account = await createAccount(db, {
     serviceId: service.id,
@@ -96,6 +105,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     secretDataKey: sealed.wrappedDataKey,
     fingerprint: defaultFingerprint(),
     config: input.config ?? {},
+    proxyCiphertext: proxySeal?.ciphertext ?? null,
+    proxyDataKey: proxySeal?.wrappedDataKey ?? null,
   });
 
   return NextResponse.json({ accountId: account.id, status: account.status }, { status: 201 });
