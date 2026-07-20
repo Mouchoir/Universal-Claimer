@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { sealSecret } from "@uc/core";
-import { defaultFingerprint, parseCookiesJson, parseCookiesTxt } from "@uc/connectors";
+import {
+  defaultFingerprint,
+  defaultRegistry,
+  parseCookiesJson,
+  parseCookiesTxt,
+} from "@uc/connectors";
 import {
   createAccount,
   getAccountByService,
@@ -11,7 +16,7 @@ import {
 } from "@uc/db";
 import { getDb, getMasterKey } from "@/server/context";
 import { jsonError } from "@/server/http";
-import { connectAccountSchema } from "@/server/schemas";
+import { connectAccountSchema, missingConfigKeys } from "@/server/schemas";
 import { isAuthenticated } from "@/server/session-cookie";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +57,12 @@ export async function POST(req: Request): Promise<NextResponse> {
     return jsonError("ACCOUNT_EXISTS", "This service already has a connected account.", 409);
   }
 
+  const configFields = defaultRegistry().get(service.id)?.configFields;
+  const missing = missingConfigKeys(configFields, input.config);
+  if (missing.length > 0) {
+    return jsonError("CONFIG_REQUIRED", `Missing required config: ${missing.join(", ")}`, 400);
+  }
+
   // Build the secret payload from the chosen method.
   let payload: string;
   if (input.method === "session_import") {
@@ -84,6 +95,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     secretCiphertext: sealed.ciphertext,
     secretDataKey: sealed.wrappedDataKey,
     fingerprint: defaultFingerprint(),
+    config: input.config ?? {},
   });
 
   return NextResponse.json({ accountId: account.id, status: account.status }, { status: 201 });

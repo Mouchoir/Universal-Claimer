@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { defaultRegistry } from "@uc/connectors";
 import { getService } from "@uc/db";
 import { getDb } from "@/server/context";
 import { jsonError } from "@/server/http";
@@ -13,5 +14,10 @@ export async function GET(
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
   const service = await getService(getDb().db, params.id);
   if (!service) return jsonError("NOT_FOUND", "Unknown service.", 404);
-  return NextResponse.json({ serviceId: service.id, warning: service.tosWarning });
+  const configFields = defaultRegistry().get(service.id)?.configFields ?? [];
+  return NextResponse.json({
+    serviceId: service.id,
+    warning: service.tosWarning,
+    configFields,
+  });
 }

@@ -61,6 +61,8 @@ export const connectedAccount = pgTable(
     secretCiphertext: bytea("secret_ciphertext").notNull(),
     secretDataKey: bytea("secret_data_key").notNull(),
     fingerprint: jsonb("fingerprint").notNull(),
+    // Non-secret per-account connector config (e.g. { channel } for Twitch). Plain JSON.
+    config: jsonb("config").notNull().default({}),
     status: text("status").notNull().default("connected"), // connected | needs_reauth
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -163,6 +165,8 @@ export const loginSession = pgTable("login_session", {
     .references(() => service.id),
   // pending | awaiting_user | connected | timed_out | failed
   status: text("status").notNull().default("pending"),
+  // Per-account connector config carried through assisted login (e.g. { channel }).
+  config: jsonb("config").notNull().default({}),
   frame: bytea("frame"), // latest screenshot (transient; cleared when the session ends)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

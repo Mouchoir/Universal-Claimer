@@ -20,6 +20,7 @@ export interface NewAccount {
   secretCiphertext: Buffer;
   secretDataKey: Buffer;
   fingerprint: unknown;
+  config?: Record<string, string>;
 }
 
 /** Sealed secret + metadata, for the worker to open at claim time (never sent to clients). */
@@ -30,6 +31,7 @@ export interface AccountSecret {
   secretCiphertext: Buffer;
   secretDataKey: Buffer;
   fingerprint: unknown;
+  config: Record<string, string>;
 }
 
 function toPublic(row: typeof connectedAccount.$inferSelect): AccountRow {
@@ -83,6 +85,7 @@ export async function getAccountSecret(db: Database, id: string): Promise<Accoun
     secretCiphertext: row.secretCiphertext,
     secretDataKey: row.secretDataKey,
     fingerprint: row.fingerprint,
+    config: (row.config as Record<string, string>) ?? {},
   };
 }
 
@@ -95,6 +98,7 @@ export async function createAccount(db: Database, input: NewAccount): Promise<Ac
       secretCiphertext: input.secretCiphertext,
       secretDataKey: input.secretDataKey,
       fingerprint: input.fingerprint,
+      config: input.config ?? {},
     })
     .returning();
   return toPublic(row!);

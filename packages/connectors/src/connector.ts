@@ -36,6 +36,17 @@ export interface AuthResult {
   reason?: string;
 }
 
+/** A per-account config field a connector needs (e.g. Twitch's target channel). */
+export interface ConfigField {
+  key: string;
+  label: string;
+  required: boolean;
+  placeholder?: string;
+}
+
+/** Per-account connector config values (non-secret, plain JSON). */
+export type ConnectorConfig = Record<string, string>;
+
 export type ClaimOutcome =
   | "claimed"
   | "nothing_to_claim"
@@ -88,16 +99,24 @@ export interface Connector {
   readonly id: string;
   readonly version: string;
   readonly methods: ConnectionMethod[];
+  /** Per-account config fields the connect flow must collect (e.g. Twitch channel). */
+  readonly configFields?: ConfigField[];
 
   /** Validate/normalize a provided secret and return the fingerprint to persist. */
   authenticate(input: AuthInput, ctx: ConnectorContext): Promise<AuthResult>;
 
   /**
    * Perform one claim. The connector launches its own browser session with the account's
-   * persisted fingerprint, re-establishes authentication from the secret, claims, and closes
-   * the session. Returns `reauth_needed` if the stored secret no longer authenticates.
+   * persisted fingerprint, re-establishes authentication from the secret, performs the
+   * action (using per-account `config`), and closes the session. Returns `reauth_needed` if
+   * the stored secret no longer authenticates.
    */
-  claim(input: AuthInput, fingerprint: Fingerprint, ctx: ConnectorContext): Promise<ClaimResult>;
+  claim(
+    input: AuthInput,
+    fingerprint: Fingerprint,
+    config: ConnectorConfig,
+    ctx: ConnectorContext,
+  ): Promise<ClaimResult>;
 
   /** Lightweight liveness/UI-shape check feeding the connector health monitor. */
   healthCheck(ctx: ConnectorContext): Promise<HealthResult>;

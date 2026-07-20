@@ -65,6 +65,7 @@ export const connectAccountSchema = z.discriminatedUnion("method", [
     method: z.literal("session_import"),
     cookiesText: z.string().optional(),
     cookiesJson: z.string().optional(),
+    config: z.record(z.string()).optional(),
   }),
   z.object({
     serviceId: z.string(),
@@ -72,5 +73,16 @@ export const connectAccountSchema = z.discriminatedUnion("method", [
     email: z.string().email(),
     password: z.string().min(1),
     totpSeed: z.string().optional(),
+    config: z.record(z.string()).optional(),
   }),
 ]);
+
+/** Validate provided config against a connector's required fields; returns missing keys. */
+export function missingConfigKeys(
+  fields: { key: string; required: boolean }[] | undefined,
+  provided: Record<string, string> | undefined,
+): string[] {
+  if (!fields) return [];
+  const cfg = provided ?? {};
+  return fields.filter((f) => f.required && !(cfg[f.key] ?? "").trim()).map((f) => f.key);
+}

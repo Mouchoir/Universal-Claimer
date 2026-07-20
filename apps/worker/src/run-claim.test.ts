@@ -15,6 +15,7 @@ const account: LoadedAccount = {
   serviceId: "epic",
   fingerprint,
   secretJson: JSON.stringify({ cookies: [{ name: "c", value: "v" }] }),
+  config: {},
 };
 
 function makeCtx(): ConnectorContext {

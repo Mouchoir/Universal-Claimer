@@ -12,6 +12,7 @@ import {
   clearLoginFrame,
   createAccount,
   drainInputs as dbDrainInputs,
+  getLoginSession,
   setLoginFrame,
   setLoginStatus,
   type Database,
@@ -88,12 +89,14 @@ export function makeLoginDeps(args: {
     captureCookiesAndStore: async (session) => {
       const cookies = await connector.extractCookies(session as SessionHandle);
       const sealed = sealSecret(JSON.stringify({ cookies }), masterKey);
+      const loginSession = await getLoginSession(db, job.sessionId);
       await createAccount(db, {
         serviceId: job.serviceId,
         method: "session_import",
         secretCiphertext: sealed.ciphertext,
         secretDataKey: sealed.wrappedDataKey,
         fingerprint: defaultFingerprint(),
+        config: loginSession?.config ?? {},
       });
     },
     setStatus: async (sessionId, status) => setLoginStatus(db, sessionId, status),

@@ -46,7 +46,7 @@ describe("EpicConnector.claim", () => {
         fakeDriver({ listClaimableGames: async () => ["Game X"], claimGame: async () => ({ claimed: true }) }),
     });
     const { ctx } = makeCtx();
-    const res = await connector.claim(sessionInput, fp, ctx);
+    const res = await connector.claim(sessionInput, fp, {},ctx);
     expect(res.outcome).toBe("claimed");
     expect(res.summary).toContain("Game X");
   });
@@ -55,7 +55,7 @@ describe("EpicConnector.claim", () => {
     const connector = new EpicConnector({
       createDriver: () => fakeDriver({ listClaimableGames: async () => [] }),
     });
-    const res = await connector.claim(sessionInput, fp, makeCtx().ctx);
+    const res = await connector.claim(sessionInput, fp, {},makeCtx().ctx);
     expect(res.outcome).toBe("nothing_to_claim");
   });
 
@@ -63,7 +63,7 @@ describe("EpicConnector.claim", () => {
     const connector = new EpicConnector({
       createDriver: () => fakeDriver({ isAuthenticated: async () => false }),
     });
-    const res = await connector.claim(sessionInput, fp, makeCtx().ctx);
+    const res = await connector.claim(sessionInput, fp, {},makeCtx().ctx);
     expect(res.outcome).toBe("reauth_needed");
   });
 
@@ -81,7 +81,7 @@ describe("EpicConnector.claim", () => {
           },
         }),
     });
-    const res = await connector.claim(sessionInput, fp, makeCtx({ captcha: solver }).ctx);
+    const res = await connector.claim(sessionInput, fp, {},makeCtx({ captcha: solver }).ctx);
     expect(res.outcome).toBe("claimed");
     expect(calls).toBe(2);
   });
@@ -95,7 +95,7 @@ describe("EpicConnector.claim", () => {
         }),
     });
     const { ctx, events } = makeCtx(); // NullCaptchaSolver → returns null
-    const res = await connector.claim(sessionInput, fp, ctx);
+    const res = await connector.claim(sessionInput, fp, {},ctx);
     expect(res.outcome).toBe("requires_human_action");
     expect(events.some((e) => e.type === "requires_human_action")).toBe(true);
   });
@@ -103,7 +103,7 @@ describe("EpicConnector.claim", () => {
   it("closes the browser session after claiming", async () => {
     const close = vi.fn(async () => {});
     const connector = new EpicConnector({ createDriver: () => fakeDriver({}) });
-    await connector.claim(sessionInput, fp, makeCtx({
+    await connector.claim(sessionInput, fp, {},makeCtx({
       browser: { launch: async () => fakeSession, close },
     }).ctx);
     expect(close).toHaveBeenCalledOnce();
