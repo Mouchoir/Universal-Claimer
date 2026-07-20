@@ -5,6 +5,9 @@ export * from "./registry.js";
 export * from "./fingerprint.js";
 export { EpicConnector } from "./epic/index.js";
 export type { EpicPageDriver, EpicDriverFactory } from "./epic/index.js";
+export { TwitchConnector } from "./twitch/index.js";
+export type { TwitchPageDriver, TwitchDriverFactory } from "./twitch/index.js";
+export { defaultRegistry } from "./all.js";
 
 // NOTE: the CloakBrowser factory (./browser.js) is intentionally NOT re-exported here — it
 // pulls in `cloakbrowser`/Playwright. Import it from the "@uc/connectors/browser" subpath so

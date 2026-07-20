@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { defaultRegistry } from "@uc/connectors";
 import {
   LOGIN_QUEUE,
   createLoginSession,
@@ -9,6 +10,7 @@ import {
 } from "@uc/db";
 import { getDb, getQueue } from "@/server/context";
 import { jsonError } from "@/server/http";
+import { missingConfigKeys } from "@/server/schemas";
 import { isAuthenticated } from "@/server/session-cookie";
 
 export const dynamic = "force-dynamic";
@@ -16,10 +18,13 @@ export const dynamic = "force-dynamic";
 /** Start an assisted-login session: the worker opens the service login page in a controlled
  * browser and captures the cookies once the operator logs in. Requires prior consent. */
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: { id: string } },
 ): Promise<NextResponse> {
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
+
+  const body = (await req.json().catch(() => ({}))) as { config?: Record<string, string> };
+  const config = body.config ?? {};
 
   const { db } = getDb();
   const service = await getService(db, params.id);
@@ -30,8 +35,12 @@ export async function POST(
   if (await getAccountByService(db, service.id)) {
     return jsonError("ACCOUNT_EXISTS", "This service already has a connected account.", 409);
   }
+  const missing = missingConfigKeys(defaultRegistry().get(service.id)?.configFields, config);
+  if (missing.length > 0) {
+    return jsonError("CONFIG_REQUIRED", `Missing required config: ${missing.join(", ")}`, 400);
+  }
 
-  const sessionId = await createLoginSession(db, service.id);
+  const sessionId = await createLoginSession(db, service.id, config);
   const boss = await getQueue();
   await boss.send(LOGIN_QUEUE, { sessionId, serviceId: service.id }, loginSendOptions(sessionId));
 

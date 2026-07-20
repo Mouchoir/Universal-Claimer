@@ -6,6 +6,7 @@ import type {
   ClaimResult,
   ConnectionMethod,
   Connector,
+  ConnectorConfig,
   ConnectorContext,
   Fingerprint,
   HealthResult,
@@ -70,6 +71,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
   async claim(
     input: AuthInput,
     fingerprint: Fingerprint,
+    _config: ConnectorConfig,
     ctx: ConnectorContext,
   ): Promise<ClaimResult> {
     const session = await ctx.browser.launch(fingerprint);

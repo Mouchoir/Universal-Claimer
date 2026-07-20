@@ -25,6 +25,8 @@ export interface LoadedAccount {
   fingerprint: Fingerprint;
   /** Decrypted secret payload as JSON (cookies, or credentials + TOTP seed). */
   secretJson: string;
+  /** Per-account connector config (e.g. { channel } for Twitch). */
+  config: Record<string, string>;
 }
 
 /**
@@ -78,7 +80,7 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
 
   let result: { outcome: ClaimOutcome; summary: string };
   try {
-    result = await connector.claim(input, account.fingerprint, ctx);
+    result = await connector.claim(input, account.fingerprint, account.config, ctx);
   } catch (err) {
     result = { outcome: "failed", summary: `claim error: ${err instanceof Error ? err.name : "unknown"}` };
   }

@@ -9,6 +9,10 @@ export default function ConnectPage() {
   const serviceId = params.id;
 
   const [warning, setWarning] = useState<string>("");
+  const [configFields, setConfigFields] = useState<
+    { key: string; label: string; required: boolean; placeholder?: string }[]
+  >([]);
+  const [config, setConfig] = useState<Record<string, string>>({});
   const [consented, setConsented] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [method, setMethod] = useState<"session_import" | "credential_totp">("session_import");
@@ -22,7 +26,10 @@ export default function ConnectPage() {
   useEffect(() => {
     fetch(`/api/services/${serviceId}/tos`)
       .then((r) => r.json())
-      .then((d) => setWarning(d.warning ?? ""))
+      .then((d) => {
+        setWarning(d.warning ?? "");
+        setConfigFields(d.configFields ?? []);
+      })
       .catch(() => setWarning(""));
   }, [serviceId]);
 
@@ -41,7 +48,11 @@ export default function ConnectPage() {
     setError(null);
     setBusy(true);
     try {
-      const res = await fetch(`/api/services/${serviceId}/login-session`, { method: "POST" });
+      const res = await fetch(`/api/services/${serviceId}/login-session`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ config }),
+      });
       if (res.ok) {
         const data = await res.json();
         router.push(`/login-session/${data.sessionId}`);
@@ -59,7 +70,7 @@ export default function ConnectPage() {
     setError(null);
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { serviceId, method };
+      const body: Record<string, unknown> = { serviceId, method, config };
       if (method === "session_import") body.cookiesText = cookiesText;
       else Object.assign(body, { email, password, totpSeed: totpSeed || undefined });
 
@@ -101,6 +112,25 @@ export default function ConnectPage() {
         </div>
       ) : (
         <>
+          {configFields.length > 0 && (
+            <div className="uc-card" style={{ marginTop: 16, display: "grid", gap: 8 }}>
+              {configFields.map((f) => (
+                <label key={f.key} style={{ display: "grid", gap: 4 }}>
+                  <span>
+                    {f.label}
+                    {f.required ? " *" : ""}
+                  </span>
+                  <input
+                    value={config[f.key] ?? ""}
+                    placeholder={f.placeholder}
+                    required={f.required}
+                    onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
           <div className="uc-card" style={{ marginTop: 16, display: "grid", gap: 8 }}>
             <strong>Log in for me (recommended)</strong>
             <span style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>

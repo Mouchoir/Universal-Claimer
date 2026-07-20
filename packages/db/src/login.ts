@@ -15,6 +15,7 @@ export interface LoginSessionRow {
   id: string;
   serviceId: string;
   status: LoginStatus;
+  config: Record<string, string>;
 }
 
 export interface InputEvent {
@@ -22,10 +23,14 @@ export interface InputEvent {
   payload: Record<string, unknown>;
 }
 
-export async function createLoginSession(db: Database, serviceId: string): Promise<string> {
+export async function createLoginSession(
+  db: Database,
+  serviceId: string,
+  config: Record<string, string> = {},
+): Promise<string> {
   const [row] = await db
     .insert(loginSession)
-    .values({ serviceId, status: "pending" })
+    .values({ serviceId, status: "pending", config })
     .returning({ id: loginSession.id });
   return row!.id;
 }
@@ -33,7 +38,12 @@ export async function createLoginSession(db: Database, serviceId: string): Promi
 export async function getLoginSession(db: Database, id: string): Promise<LoginSessionRow | null> {
   const [row] = await db.select().from(loginSession).where(eq(loginSession.id, id)).limit(1);
   return row
-    ? { id: row.id, serviceId: row.serviceId, status: row.status as LoginStatus }
+    ? {
+        id: row.id,
+        serviceId: row.serviceId,
+        status: row.status as LoginStatus,
+        config: (row.config as Record<string, string>) ?? {},
+      }
     : null;
 }
 

@@ -13,6 +13,16 @@ export const SEED_SERVICES = [
       "and could result in suspension or loss of your Epic account. You use this at your own " +
       "risk. Continue only if you accept this.",
   },
+  {
+    id: "twitch",
+    displayName: "Twitch Prime",
+    connectorVersion: "0.1.0",
+    methods: ["assisted_login", "session_import", "credential_totp"],
+    tosWarning:
+      "Automating Twitch Prime resubscriptions may violate Twitch's Terms of Service and " +
+      "could result in suspension of your Twitch account. You use this at your own risk. " +
+      "Continue only if you accept this.",
+  },
 ] as const;
 
 /** Insert/refresh the seeded services (idempotent). */

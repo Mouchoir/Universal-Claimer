@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   jobViewSchema,
   loginInputSchema,
+  missingConfigKeys,
   scheduleSchema,
   sseJobsEventSchema,
 } from "../src/server/schemas.js";
@@ -64,5 +65,13 @@ describe("jobs & SSE payload contract", () => {
     expect(
       scheduleSchema.safeParse({ frequency: "daily", hour: 24, minute: 0, enabled: true }).success,
     ).toBe(false);
+  });
+
+  it("missingConfigKeys reports unmet required connector config", () => {
+    const fields = [{ key: "channel", required: true }];
+    expect(missingConfigKeys(fields, { channel: "ninja" })).toEqual([]);
+    expect(missingConfigKeys(fields, {})).toEqual(["channel"]);
+    expect(missingConfigKeys(fields, { channel: "   " })).toEqual(["channel"]);
+    expect(missingConfigKeys(undefined, {})).toEqual([]);
   });
 });

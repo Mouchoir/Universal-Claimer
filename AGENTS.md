@@ -194,6 +194,21 @@ dashboard `ScheduleEditor` (daily/weekly + time). Connector-agnostic. **99 tests
 running worker + Postgres). Git: committed on the feature branch; `main` is the stable
 baseline.
 
+## Feature 003 — Twitch Prime connector + per-account config (branch `feat/003-twitch`)
+
+Second connector, proving the plugin architecture with a targeted action (resub) and adding
+**per-account connector config**. `spec`/`tasks` under `specs/003-twitch-connector/`.
+- Generic config infra: `ConfigField` + `configFields` on `Connector`; `claim(input,
+  fingerprint, config, ctx)` (Epic ignores config); `connected_account.config` +
+  `login_session.config` jsonb (migration 0003); connect UI renders fields generically;
+  connect + assisted-login validate/carry config; `missingConfigKeys` helper.
+- `TwitchConnector` (Connector + InteractiveLogin, `configFields=[channel]`, claim = resub
+  with Prime → claimed/nothing_to_claim/failed/reauth/human-action) + `PlaywrightTwitchDriver`
+  (best-effort selectors). `defaultRegistry()` (Epic + Twitch) shared by worker + web; `twitch`
+  service seeded. Docs `docs/operations/twitch.md`.
+- **108 tests green, tsc -b + web typecheck + next build clean.** Not run live. DOM selectors
+  best-effort (need live validation, like Epic). Branch chain: main → feat/002 → feat/003.
+
 ## Legal / TOS reminder
 
 Automating these platforms may violate their Terms of Service and can get the operator's own

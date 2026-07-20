@@ -10,9 +10,8 @@ import {
   type CaptchaSolver,
 } from "@uc/core";
 import {
-  ConnectorRegistry,
-  EpicConnector,
   defaultFingerprint,
+  defaultRegistry,
   generateTotp,
   type ConnectorContext,
   type Fingerprint,
@@ -57,8 +56,7 @@ export async function main(): Promise<void> {
   const masterKey = loadMasterKey(cfg.APP_ENCRYPTION_KEY);
   const { db, pool, close } = createDb(cfg.DATABASE_URL);
 
-  const registry = new ConnectorRegistry();
-  registry.register(new EpicConnector());
+  const registry = defaultRegistry(); // Epic + Twitch
 
   const captcha: CaptchaSolver = process.env.ANTI_CAPTCHA_KEY
     ? new AntiCaptchaSolver({ apiKey: process.env.ANTI_CAPTCHA_KEY })
@@ -97,6 +95,7 @@ export async function main(): Promise<void> {
         serviceId: row.serviceId,
         fingerprint: (row.fingerprint as Fingerprint) ?? defaultFingerprint(),
         secretJson,
+        config: row.config ?? {},
       };
     },
     markRunning: async (jobId) => {
