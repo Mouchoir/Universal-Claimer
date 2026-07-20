@@ -66,6 +66,7 @@ export const connectAccountSchema = z.discriminatedUnion("method", [
     cookiesText: z.string().optional(),
     cookiesJson: z.string().optional(),
     config: z.record(z.string()).optional(),
+    proxy: z.string().optional(),
   }),
   z.object({
     serviceId: z.string(),
@@ -74,6 +75,7 @@ export const connectAccountSchema = z.discriminatedUnion("method", [
     password: z.string().min(1),
     totpSeed: z.string().optional(),
     config: z.record(z.string()).optional(),
+    proxy: z.string().optional(),
   }),
 ]);
 
