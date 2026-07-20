@@ -209,6 +209,20 @@ Second connector, proving the plugin architecture with a targeted action (resub)
 - **108 tests green, tsc -b + web typecheck + next build clean.** Not run live. DOM selectors
   best-effort (need live validation, like Epic). Branch chain: main → feat/002 → feat/003.
 
+## Feature 004 — Microsoft Rewards connector (branch `feat/004-ms-rewards`)
+
+Third headline connector (completes Epic + Twitch + MS Rewards). `spec`/`tasks` under
+`specs/004-ms-rewards/`. `MsRewardsConnector` (Connector + InteractiveLogin, `configFields=[]`)
+— claim runs the day's outstanding desktop Bing searches with varied queries
+(`queries.ts` `pickQuery`) and humanized delays; injectable `sleep`/`rand`/`maxSearches`
+(default 30) for deterministic tests. Outcomes: nothing_to_claim / claimed (count) /
+reauth_needed / requires_human_action (verification) / failed. `PlaywrightMsRewardsDriver`
+best-effort selectors (modern Bing Rewards dashboard only; desktop searches only for v1).
+Registered in `defaultRegistry()`; `microsoft` service seeded; docs
+`docs/operations/microsoft-rewards.md`. No schema change. **115 tests green, tsc -b + web
+typecheck + next build clean.** Not run live (selectors best-effort). Branch chain:
+main → 002 → 003 → 004.
+
 ## Legal / TOS reminder
 
 Automating these platforms may violate their Terms of Service and can get the operator's own

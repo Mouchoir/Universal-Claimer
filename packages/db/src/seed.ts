@@ -23,6 +23,16 @@ export const SEED_SERVICES = [
       "could result in suspension of your Twitch account. You use this at your own risk. " +
       "Continue only if you accept this.",
   },
+  {
+    id: "microsoft",
+    displayName: "Microsoft Rewards",
+    connectorVersion: "0.1.0",
+    methods: ["assisted_login", "session_import", "credential_totp"],
+    tosWarning:
+      "Automating Microsoft Rewards may violate the Microsoft Rewards Terms of Service and " +
+      "could result in suspension of your Microsoft account and loss of points. You use this " +
+      "at your own risk. Continue only if you accept this.",
+  },
 ] as const;
 
 /** Insert/refresh the seeded services (idempotent). */
