@@ -35,6 +35,19 @@ packages/notifications # optional outbound webhook (Discord/Telegram/ntfy)
 deploy          # Dockerfiles + docker-compose.yml + .env.example
 ```
 
+## Self-host (Docker)
+
+```bash
+git clone https://github.com/Mouchoir/Universal-Claimer.git
+cd Universal-Claimer/deploy
+cp .env.example .env      # set APP_ENCRYPTION_KEY (openssl rand -base64 32) + PORT
+docker compose up -d --build
+```
+
+`docker compose up` starts Postgres, applies migrations (one-shot `migrate` service), then the
+web portal + worker. Open `http://<host>:<PORT>` for first-run onboarding. x86_64 host
+required. Full guide: [docs/operations/deploy.md](docs/operations/deploy.md).
+
 ## Development
 
 ```bash
