@@ -235,6 +235,24 @@ with that account's decrypted proxy (claims + assisted login) — connectors unc
 optional proxy field. Docs `docs/operations/proxies.md`. **119 tests green, tsc -b + web
 typecheck + next build clean.** Not run live. Branch chain: main → 002 → 003 → 004 → 005.
 
+## Feature 006 — CI & packaging / hardening (branch `feat/006-ci-packaging`)
+
+Operational hardening + automated full test suite. `spec`/`tasks` under
+`specs/006-ci-packaging/`.
+- **CI** `.github/workflows/ci.yml`: on push/PR, `pnpm install --frozen-lockfile` → `pnpm
+  build` → web typecheck → `pnpm test` (with a Postgres service + `DATABASE_URL_TEST`, so the
+  gated integration tests run) → web production build. This is the automated "all tests" gate.
+- `docker compose up`: one-shot **migrate** service (worker image, `node
+  packages/db/dist/migrate.js`) applies migrations+seed before web/worker (they
+  `depends_on ... service_completed_successfully`).
+- **`GET /api/health`** (DB reachability, unauth) + web container healthcheck.
+- Root `verify` script (build + web typecheck + tests) — needs `pnpm` on PATH (CI/dev; this
+  sandbox has no global pnpm so run steps individually via `corepack pnpm`).
+- Self-host quickstart: README section + `docs/operations/deploy.md`.
+- **119 unit/contract tests + build + web typecheck green.** DB-integration run was deferred
+  (Docker was off in this session) → CI executes it. Branch chain: main → 002 → 003 → 004 →
+  005 → 006.
+
 ## Legal / TOS reminder
 
 Automating these platforms may violate their Terms of Service and can get the operator's own

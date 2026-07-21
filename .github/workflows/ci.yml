@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: uc
+          POSTGRES_PASSWORD: uc
+          POSTGRES_DB: uc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U uc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Enables the gated DB integration tests (they skip without this).
+      DATABASE_URL_TEST: postgres://uc:uc@localhost:5432/uc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable pnpm (corepack)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (tsc -b, all packages)
+        run: pnpm build
+
+      - name: Typecheck web
+        run: pnpm --filter @uc/web exec tsc --noEmit
+
+      - name: Test (unit + contract + gated DB integration)
+        run: pnpm test
+
+      - name: Web production build
+        run: pnpm --filter @uc/web build

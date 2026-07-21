@@ -14,6 +14,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify": "pnpm build && pnpm --filter @uc/web exec tsc --noEmit && pnpm test",
     "test:contract": "vitest run packages/connectors",
     "test:integration": "vitest run apps"
   },
