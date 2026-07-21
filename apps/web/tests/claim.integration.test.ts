@@ -9,7 +9,6 @@ import {
   hasActiveJobForAccount,
   markRequiresHumanAction,
   markRunning,
-  runMigrations,
   type DbHandle,
 } from "@uc/db";
 import { reconcileInterruptedJobs } from "../../worker/src/reconcile.js";
@@ -26,7 +25,6 @@ maybe("claim jobs (integration)", () => {
   let accountId: string;
 
   beforeAll(async () => {
-    await runMigrations(url!);
     handle = createDb(url!);
     await handle.pool.query("DELETE FROM job");
     await handle.pool.query("DELETE FROM connected_account");

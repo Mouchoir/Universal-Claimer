@@ -7,7 +7,6 @@ import {
   getAccountByService,
   hasConsent,
   recordConsent,
-  runMigrations,
   type DbHandle,
 } from "@uc/db";
 
@@ -25,7 +24,6 @@ maybe("connect + consent (integration)", () => {
   let handle: DbHandle;
 
   beforeAll(async () => {
-    await runMigrations(url!);
     handle = createDb(url!);
     await handle.pool.query("DELETE FROM connected_account");
     await handle.pool.query("DELETE FROM consent_record");

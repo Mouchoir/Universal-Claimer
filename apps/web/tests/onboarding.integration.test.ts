@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, runMigrations, type DbHandle } from "@uc/db";
+import { createDb, type DbHandle } from "@uc/db";
 import {
   isSetupNeeded,
   recoverPassword,
@@ -22,7 +22,6 @@ maybe("onboarding (integration)", () => {
   let store: DrizzleAdminStore;
 
   beforeAll(async () => {
-    await runMigrations(url!);
     handle = createDb(url!);
     store = new DrizzleAdminStore(handle.db);
     // Clean admin state (services are seeded by migrations and left intact).
