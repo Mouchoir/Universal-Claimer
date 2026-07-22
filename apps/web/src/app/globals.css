@@ -102,6 +102,16 @@ textarea {
   border-radius: var(--uc-radius);
 }
 
+/* Checkboxes/radios must not be stretched full-width by the rule above. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex: none;
+  accent-color: var(--uc-primary);
+}
+
 textarea {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

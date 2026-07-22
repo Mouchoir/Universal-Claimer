@@ -168,6 +168,8 @@ export const loginSession = pgTable("login_session", {
     .references(() => service.id),
   // pending | awaiting_user | connected | timed_out | failed
   status: text("status").notNull().default("pending"),
+  // Operator has finished logging in and asked to capture the session.
+  confirmed: boolean("confirmed").notNull().default(false),
   // Per-account connector config carried through assisted login (e.g. { channel }).
   config: jsonb("config").notNull().default({}),
   // Optional proxy (encrypted) carried through assisted login onto the created account.

@@ -15,6 +15,7 @@ export interface LoginSessionRow {
   id: string;
   serviceId: string;
   status: LoginStatus;
+  confirmed: boolean;
   config: Record<string, string>;
   proxyCiphertext: Buffer | null;
   proxyDataKey: Buffer | null;
@@ -56,11 +57,17 @@ export async function getLoginSession(db: Database, id: string): Promise<LoginSe
         id: row.id,
         serviceId: row.serviceId,
         status: row.status as LoginStatus,
+        confirmed: row.confirmed,
         config: (row.config as Record<string, string>) ?? {},
         proxyCiphertext: row.proxyCiphertext ?? null,
         proxyDataKey: row.proxyDataKey ?? null,
       }
     : null;
+}
+
+/** The operator has finished logging in and wants their session captured. */
+export async function confirmLoginSession(db: Database, id: string): Promise<void> {
+  await db.update(loginSession).set({ confirmed: true }).where(eq(loginSession.id, id));
 }
 
 export async function setLoginStatus(

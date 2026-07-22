@@ -43,7 +43,7 @@ describe("EpicConnector.claim", () => {
   it("claims an available free game", async () => {
     const connector = new EpicConnector({
       createDriver: () =>
-        fakeDriver({ listClaimableGames: async () => ["Game X"], claimGame: async () => ({ claimed: true }) }),
+        fakeDriver({ listClaimableGames: async () => [{ title: "Game X", url: "https://store.epicgames.com/p/x" }], claimGame: async () => ({ claimed: true }) }),
     });
     const { ctx } = makeCtx();
     const res = await connector.claim(sessionInput, fp, {},ctx);
@@ -73,7 +73,7 @@ describe("EpicConnector.claim", () => {
     const connector = new EpicConnector({
       createDriver: () =>
         fakeDriver({
-          listClaimableGames: async () => ["Game X"],
+          listClaimableGames: async () => [{ title: "Game X", url: "https://store.epicgames.com/p/x" }],
           claimGame: async (_t, token) => {
             calls += 1;
             // First call reports captcha; retry with a token succeeds.
@@ -90,7 +90,7 @@ describe("EpicConnector.claim", () => {
     const connector = new EpicConnector({
       createDriver: () =>
         fakeDriver({
-          listClaimableGames: async () => ["Game X"],
+          listClaimableGames: async () => [{ title: "Game X", url: "https://store.epicgames.com/p/x" }],
           claimGame: async () => ({ claimed: false, captcha: true }),
         }),
     });

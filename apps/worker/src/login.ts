@@ -85,7 +85,12 @@ export function makeLoginDeps(args: {
       const page = await pageOf((session as SessionHandle).context);
       for (const ev of events) await applyInput(page, ev);
     },
-    isLoggedIn: async (session) => connector.isLoggedIn(session as SessionHandle, ctx),
+    // Non-navigating: the loop must NOT reload the page while the operator is logging in.
+    // Capture is triggered when the operator confirms they have finished.
+    isLoggedIn: async () => {
+      const s = await getLoginSession(db, job.sessionId);
+      return s?.confirmed ?? false;
+    },
     captureCookiesAndStore: async (session) => {
       const cookies = await connector.extractCookies(session as SessionHandle);
       const sealed = sealSecret(JSON.stringify({ cookies }), masterKey);
