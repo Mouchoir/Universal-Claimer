@@ -102,31 +102,34 @@ export class EpicConnector implements Connector, InteractiveLogin {
       }
 
       const claimed: string[] = [];
-      for (const title of games) {
-        let res = await driver.claimGame(title);
+      for (const game of games) {
+        let res = await driver.claimGame(game);
         if (res.captcha) {
           const token = await ctx.captcha.solve({
             type: "recaptcha_v2",
             websiteURL: EPIC_STORE_URL,
             websiteKey: EPIC_RECAPTCHA_KEY,
           });
-          if (token) res = await driver.claimGame(title, token);
-          if (!res.claimed) {
+          if (token) res = await driver.claimGame(game, token);
+          if (res.captcha) {
             ctx.emit({
               type: "requires_human_action",
-              prompt: `A captcha must be solved to claim "${title}". Solve it in your own browser, then resume.`,
+              prompt: `A captcha must be solved to claim "${game.title}". Solve it, then resume.`,
             });
             return {
               outcome: "requires_human_action",
-              summary: `A captcha for "${title}" could not be solved automatically — human action needed.`,
+              summary: `A captcha for "${game.title}" could not be solved automatically — human action needed.`,
             };
           }
         }
-        if (res.claimed) claimed.push(title);
+        if (res.claimed) claimed.push(game.title);
       }
 
       if (claimed.length === 0) {
-        return { outcome: "nothing_to_claim", summary: "Nothing new was claimed." };
+        return {
+          outcome: "nothing_to_claim",
+          summary: `Nothing new to claim (${games.length} free game(s) already owned).`,
+        };
       }
       return { outcome: "claimed", summary: `Claimed: ${claimed.join(", ")}` };
     } finally {

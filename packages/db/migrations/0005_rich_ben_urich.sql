@@ -1,0 +1,1 @@
+ALTER TABLE "login_session" ADD COLUMN "confirmed" boolean DEFAULT false NOT NULL;

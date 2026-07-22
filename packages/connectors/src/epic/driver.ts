@@ -1,6 +1,12 @@
 import type { BrowserContext, Page } from "playwright-core";
 import type { BrowserCookie, SessionHandle } from "../connector.js";
 
+/** A currently-free Epic game (title + absolute product URL). */
+export interface FreeGame {
+  title: string;
+  url: string;
+}
+
 /**
  * The page-interaction surface the Epic connector needs. Abstracted from raw Playwright so
  * the connector's decision logic is unit-testable with a fake driver (contract tests), and
@@ -14,10 +20,13 @@ export interface EpicPageDriver {
     password: string,
     totp?: string,
   ): Promise<{ authenticated: boolean; captcha?: boolean }>;
-  /** Titles of free games claimable by this account right now. */
-  listClaimableGames(): Promise<string[]>;
-  /** Claim one game; pass a solved captcha token on a retry after a challenge. */
-  claimGame(title: string, captchaToken?: string): Promise<{ claimed: boolean; captcha?: boolean }>;
+  /** Free games claimable right now (title + product URL). */
+  listClaimableGames(): Promise<FreeGame[]>;
+  /** Claim one game. Pass a solved captcha token on a retry after a challenge. */
+  claimGame(
+    game: FreeGame,
+    captchaToken?: string,
+  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }>;
   /** Read the current cookies from the browser context (assisted login). */
   getCookies(): Promise<BrowserCookie[]>;
   /** Navigate the session to a URL (assisted login opens the login page). */
@@ -86,23 +95,73 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     return { authenticated: await this.isAuthenticated() };
   }
 
-  async listClaimableGames(): Promise<string[]> {
+  async listClaimableGames(): Promise<FreeGame[]> {
     const page = await this.page();
     await page.goto(FREE_GAMES_URL, { waitUntil: "domcontentloaded" });
-    // Best-effort: titles of the current free promotion cards.
-    const titles = await page
-      .locator("[data-testid='free-game-card'] [data-testid='title']")
-      .allTextContents()
-      .catch(() => [] as string[]);
-    return titles.map((t) => t.trim()).filter(Boolean);
+    // Give the free-games grid a moment to render.
+    await page.waitForTimeout(1500).catch(() => undefined);
+    // Free-now games are anchors whose aria-label contains "Free Now"; the title sits
+    // between the second "Free Now," and ", Free Now -" (validated against the live page).
+    const games = await page
+      .evaluate(() => {
+        const seen = new Set<string>();
+        const out: { title: string; url: string }[] = [];
+        for (const a of Array.from(document.querySelectorAll("a[aria-label]"))) {
+          const label = a.getAttribute("aria-label") ?? "";
+          if (!/Free Now/i.test(label)) continue;
+          const href = a.getAttribute("href") ?? "";
+          if (!href.includes("/p/")) continue;
+          if (seen.has(href)) continue;
+          seen.add(href);
+          const m = label.match(/Free Now,\s*(.+?),\s*Free Now\s*-/i);
+          out.push({ title: (m?.[1] ?? a.textContent ?? "").trim(), url: href });
+        }
+        return out;
+      })
+      .catch(() => [] as { title: string; url: string }[]);
+    return games.map((g) => ({
+      title: g.title,
+      url: g.url.startsWith("http") ? g.url : `https://store.epicgames.com${g.url}`,
+    }));
   }
 
   async claimGame(
-    title: string,
-  ): Promise<{ claimed: boolean; captcha?: boolean }> {
+    game: FreeGame,
+  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }> {
     const page = await this.page();
-    // Best-effort claim flow placeholder; real selectors validated live.
+    await page.goto(game.url, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1200).catch(() => undefined);
     if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+
+    // The purchase CTA (stable testid). Its label tells us if the game is already owned.
+    const cta = page.locator("[data-testid='purchase-cta-button']").first();
+    if ((await cta.count().catch(() => 0)) === 0) return { claimed: false, alreadyOwned: true };
+    const ctaText = ((await cta.textContent().catch(() => "")) ?? "").toLowerCase();
+    if (/in library|owned|biblioth|dans la biblioth|installer|install/i.test(ctaText)) {
+      return { claimed: false, alreadyOwned: true };
+    }
+
+    await cta.click().catch(() => undefined);
+    // The purchase overlay (iframe) loads. Best-effort: place the order and accept any EULA,
+    // searching the main page + all frames. This checkout flow is the part most likely to
+    // need live tuning per Epic UI changes.
+    await page.waitForTimeout(2500).catch(() => undefined);
+    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+
+    const clickInAnyFrame = async (re: RegExp): Promise<void> => {
+      for (const frame of page.frames()) {
+        const btn = frame.getByRole("button", { name: re }).first();
+        if (await btn.count().catch(() => 0)) {
+          await btn.click({ timeout: 6000 }).catch(() => undefined);
+          return;
+        }
+      }
+    };
+    await clickInAnyFrame(/place order|passer la commande/i);
+    await clickInAnyFrame(/i agree|j['’]accepte|accept/i);
+    await page.waitForTimeout(2500).catch(() => undefined);
+    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+
     return { claimed: true };
   }
 

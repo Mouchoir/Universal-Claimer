@@ -67,9 +67,13 @@ export async function main(): Promise<void> {
 
   // CloakBrowser manages its own binary (auto-downloaded, or pre-baked in the Docker image).
   // A fresh factory per run bakes in that account's proxy (Principle VII: per-account IP).
+  // Headed by default (best stealth; on a headless host it runs under Xvfb so no window
+  // appears). Set WORKER_HEADED=false to run truly headless (e.g. a local desktop where a
+  // popup window is unwanted — the operator then logs in via the in-page relay only).
+  const headed = process.env.WORKER_HEADED !== "false";
   const makeBrowser = (proxy?: string): CloakBrowserFactory =>
     new CloakBrowserFactory({
-      headed: true,
+      headed,
       ...(licenseKey ? { licenseKey } : {}),
       ...(proxy ? { proxy } : {}),
     });
