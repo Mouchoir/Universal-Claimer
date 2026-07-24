@@ -19,12 +19,17 @@ self-hosted and single-user, is your own. We never persist your password; only t
 
 ## Two operating modes
 
-- **Local display** (worker has a screen, e.g. run on a desktop): the worker opens a headed
-  CloakBrowser window the operator sees and drives directly. No relay needed.
-- **Headless (NAS + Xvfb, the default deployment)**: the operator can't see the worker's
-  window, so the worker **relays** it to the dashboard — pushes screenshot frames and applies
-  operator input events (click/type/key). **No VNC** (Principle V): a screenshot + input
-  relay, not a remote desktop.
+- **Native window** (worker has a screen, e.g. run on the same desktop as the operator): the
+  worker opens a headed CloakBrowser window the operator sees and drives directly. No relay.
+- **Headless (NAS + Xvfb, the default remote deployment)**: the operator can't see the worker's
+  window, so the worker **relays** it into the wizard. This uses the **CDP screencast relay**
+  (see [cdp-relay.md](./cdp-relay.md)) — pushed JPEG frames + `Input.insertText`/dispatch over a
+  same-origin WebSocket, which is fluid and supports copy-paste. **No VNC** (Principle V): a
+  screencast + input relay scoped to one page, not a remote desktop.
+
+  > The original relay (screenshots polled from a `bytea` column + input rows in a `login_input`
+  > table) has been **replaced** by the CDP relay; frames and input are now event-driven and
+  > never persisted. The sections below describe the original contract for historical context.
 
 ## Architecture
 

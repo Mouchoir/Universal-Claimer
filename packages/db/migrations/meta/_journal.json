@@ -43,6 +43,13 @@
       "when": 1784674057810,
       "tag": "0005_rich_ben_urich",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784891703382,
+      "tag": "0006_bouncy_beast",
+      "breakpoints": true
     }
   ]
 }

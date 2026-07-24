@@ -18,6 +18,7 @@ coverage/
 .env.*
 !.env.example
 .e2e-key
+.relay-token
 deploy/.env
 
 # Local temp / smoke scripts

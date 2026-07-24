@@ -1,22 +1,46 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-// The worker launches the browser at this fixed viewport (see defaultFingerprint).
+// The worker launches the browser at this fixed viewport (see connectors' defaultFingerprint),
+// which is what CDP Input events expect. Mirrors RELAY_VIEWPORT in @uc/core relay.ts — kept
+// inline so this client bundle never imports @uc/core (which pulls node crypto).
 const VIEW_W = 1280;
 const VIEW_H = 800;
+
+type Msg =
+  | { t: "frame"; data: string; format: string; w: number; h: number }
+  | { t: "gone" };
+
+/** Map a pointer position on the canvas to CloakBrowser viewport CSS px (see @uc/core). */
+function mapPointer(clientX: number, clientY: number, dispW: number, dispH: number) {
+  if (dispW <= 0 || dispH <= 0) return { x: 0, y: 0 };
+  const clamp = (v: number, hi: number) => (v < 0 ? 0 : v > hi ? hi : v);
+  return {
+    x: clamp(Math.round((clientX / dispW) * VIEW_W), VIEW_W - 1),
+    y: clamp(Math.round((clientY / dispH) * VIEW_H), VIEW_H - 1),
+  };
+}
+
+// Control keys forwarded as key events; everything printable goes through insertText (t:"text").
+const CONTROL_KEYS = new Set([
+  "Enter", "Backspace", "Delete", "Tab", "Escape",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
+]);
 
 export default function LoginSessionPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const [status, setStatus] = useState<string>("pending");
   const [embedRelay, setEmbedRelay] = useState(false);
-  const [frameTick, setFrameTick] = useState(0);
   const [capturing, setCapturing] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
+  const [relayError, setRelayError] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
-  // Poll status + refresh the frame.
+  // Poll status (drives the redirect on success and reveals the deployment mode).
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -27,18 +51,13 @@ export default function LoginSessionPage() {
           if (!alive) return;
           setStatus(data.status);
           setEmbedRelay(Boolean(data.embedRelay));
-          if (data.status === "connected") {
-            router.push("/dashboard");
-            return;
-          }
+          if (data.status === "connected") router.push("/dashboard");
         }
       } catch {
         /* ignore */
       }
-      // Frame counter only matters when the embed <img> is mounted (headless relay mode).
-      if (alive) setFrameTick((t) => t + 1);
     };
-    const iv = setInterval(tick, 900);
+    const iv = setInterval(tick, 1200);
     void tick();
     return () => {
       alive = false;
@@ -46,32 +65,93 @@ export default function LoginSessionPage() {
     };
   }, [id, router]);
 
-  async function send(event: Record<string, unknown>) {
-    await fetch(`/api/login-sessions/${id}/input`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(event),
-    }).catch(() => undefined);
-  }
+  const send = useCallback((msg: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  }, []);
 
-  function onClick(e: React.MouseEvent<HTMLImageElement>) {
+  // Open the relay WebSocket once we are awaiting login in relay mode.
+  useEffect(() => {
+    if (!embedRelay || status !== "awaiting_user" || wsRef.current) return;
+    let closed = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/login-sessions/${id}/relay-ticket`, { method: "POST" });
+        if (!res.ok) throw new Error("ticket request failed");
+        const { ticket } = await res.json();
+        if (closed) return;
+        const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(
+          `${proto}//${window.location.host}/api/relay/client/${id}?ticket=${encodeURIComponent(ticket)}`,
+        );
+        wsRef.current = ws;
+        if (!imgRef.current) imgRef.current = new Image();
+        ws.onmessage = (ev) => {
+          let msg: Msg;
+          try {
+            msg = JSON.parse(typeof ev.data === "string" ? ev.data : "");
+          } catch {
+            return;
+          }
+          if (msg.t === "frame") drawFrame(msg);
+          else if (msg.t === "gone") setRelayError("The login browser closed. Start again.");
+        };
+        ws.onerror = () => setRelayError("Live view connection error.");
+      } catch {
+        setRelayError("Could not open the live view.");
+      }
+    })();
+    return () => {
+      closed = true;
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [embedRelay, status, id]);
+
+  function drawFrame(msg: { data: string; format: string; w: number; h: number }) {
+    const canvas = canvasRef.current;
     const img = imgRef.current;
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
-    const x = Math.round(((e.clientX - rect.left) / rect.width) * VIEW_W);
-    const y = Math.round(((e.clientY - rect.top) / rect.height) * VIEW_H);
-    void send({ kind: "click", x, y });
+    if (!canvas || !img) return;
+    img.onload = () => {
+      if (canvas.width !== msg.w) canvas.width = msg.w;
+      if (canvas.height !== msg.h) canvas.height = msg.h;
+      canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+    };
+    img.src = `data:image/${msg.format};base64,${msg.data}`;
   }
 
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key.length === 1) void send({ kind: "type", text: e.key });
-    else void send({ kind: "key", key: e.key });
+  function pointer(e: React.MouseEvent) {
+    const c = canvasRef.current;
+    if (!c) return { x: 0, y: 0 };
+    const rect = c.getBoundingClientRect();
+    return mapPointer(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height);
+  }
+  const button = (e: React.MouseEvent) => (e.button === 2 ? "right" : e.button === 1 ? "middle" : "left");
+
+  const onMouseDown = (e: React.MouseEvent) => send({ t: "mouse", kind: "down", ...pointer(e), button: button(e) });
+  const onMouseUp = (e: React.MouseEvent) => send({ t: "mouse", kind: "up", ...pointer(e), button: button(e) });
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (e.buttons) send({ t: "mouse", kind: "move", ...pointer(e) });
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    const p = pointer(e as unknown as React.MouseEvent);
+    send({ t: "wheel", x: p.x, y: p.y, dy: Math.round(e.deltaY) });
+  };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.ctrlKey || e.metaKey) return; // let copy/paste shortcuts through to the paste handler
+    if (CONTROL_KEYS.has(e.key)) {
+      send({ t: "key", action: "down", key: e.key, code: e.code });
+      e.preventDefault();
+    } else if (e.key.length === 1) {
+      send({ t: "text", text: e.key });
+      e.preventDefault();
+    }
+  };
+  const onPaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData("text");
+    if (text) send({ t: "text", text });
     e.preventDefault();
-  }
-
-  function onWheel(e: React.WheelEvent) {
-    void send({ kind: "scroll", dy: Math.round(e.deltaY) });
-  }
+  };
 
   async function confirm() {
     setCapturing(true);
@@ -79,6 +159,11 @@ export default function LoginSessionPage() {
   }
 
   const waiting = !(status === "timed_out" || status === "failed") && status !== "awaiting_user";
+  const captureButton = (
+    <button onClick={confirm} disabled={capturing} style={{ marginTop: 4 }}>
+      {capturing ? "Capturing your session…" : "I've finished logging in — capture my session"}
+    </button>
+  );
 
   return (
     <main>
@@ -101,36 +186,44 @@ export default function LoginSessionPage() {
           </p>
         </div>
       ) : embedRelay ? (
-        // Headless deployment: no native window, so relay the login page into the dashboard.
+        // Headless deployment: the login page is streamed here; sign in right in this view.
         <>
           <div className="uc-card" style={{ marginBottom: 12 }}>
             <p>
-              <strong>Sign in below, then capture your session.</strong>
+              <strong>Sign in in the live view below, then capture your session.</strong>
             </p>
             <p style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
-              Click once inside the view to give it keyboard focus; scrolling works too. When
+              Click inside the view to focus it. Typing and paste (Ctrl/Cmd+V) both work. When
               you&apos;ve finished signing in:
             </p>
-            <button onClick={confirm} disabled={capturing}>
-              {capturing ? "Capturing your session…" : "I've finished logging in — capture my session"}
-            </button>
+            {captureButton}
+            {relayError && (
+              <p style={{ color: "var(--uc-danger, #f87171)", fontSize: 13, marginTop: 8 }}>{relayError}</p>
+            )}
           </div>
 
-          <div
+          <canvas
+            ref={canvasRef}
+            width={VIEW_W}
+            height={VIEW_H}
             tabIndex={0}
-            onKeyDown={onKeyDown}
+            onMouseDown={onMouseDown}
+            onMouseUp={onMouseUp}
+            onMouseMove={onMouseMove}
             onWheel={onWheel}
-            style={{ outline: "none", border: "1px solid var(--uc-border)", borderRadius: "var(--uc-radius)", overflow: "hidden", maxWidth: "100%" }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imgRef}
-              src={`/api/login-sessions/${id}/frame?t=${frameTick}`}
-              alt="login view"
-              onClick={onClick}
-              style={{ width: "100%", display: "block", cursor: "crosshair" }}
-            />
-          </div>
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{
+              width: "100%",
+              display: "block",
+              outline: "none",
+              cursor: "crosshair",
+              border: "1px solid var(--uc-border)",
+              borderRadius: "var(--uc-radius)",
+              background: "#000",
+            }}
+          />
         </>
       ) : (
         // Native window (default): the operator logs in in the window that just opened.
@@ -142,9 +235,7 @@ export default function LoginSessionPage() {
             <li>Switch to that window and sign in to the service normally.</li>
             <li>Come back here and click the button below to save your session.</li>
           </ol>
-          <button onClick={confirm} disabled={capturing} style={{ marginTop: 4 }}>
-            {capturing ? "Capturing your session…" : "I've finished logging in — capture my session"}
-          </button>
+          {captureButton}
           <p style={{ color: "var(--uc-text-muted)", fontSize: 13, marginTop: 12 }}>
             Don&apos;t see a window? It may be behind this one — check your taskbar.
           </p>
