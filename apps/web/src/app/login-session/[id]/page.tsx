@@ -74,9 +74,9 @@ export default function LoginSessionPage() {
   }, []);
 
   const sendKey = useCallback(
-    (key: string, code: string, vk: number | undefined) => {
-      send({ t: "key", action: "down", key, code, vk });
-      send({ t: "key", action: "up", key, code, vk });
+    (key: string, code: string, vk: number | undefined, modifiers = 0) => {
+      send({ t: "key", action: "down", key, code, vk, modifiers });
+      send({ t: "key", action: "up", key, code, vk, modifiers });
     },
     [send],
   );
@@ -127,9 +127,25 @@ export default function LoginSessionPage() {
     ta.focus();
 
     const onKey = (e: KeyboardEvent) => {
-      // Editing/navigation keys. Ctrl/Cmd combos flow through to the paste handler.
-      if (e.key in KEY_VK && !e.ctrlKey && !e.metaKey) {
-        sendKey(e.key, e.code || e.key, KEY_VK[e.key]);
+      const ctrlish = e.ctrlKey || e.metaKey;
+      // Ctrl/Cmd+V is handled by the paste listener (local clipboard → insertText).
+      if (ctrlish && (e.key === "v" || e.key === "V")) return;
+
+      const modifiers =
+        (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+
+      // Editing/navigation keys — forwarded with modifiers so Shift+Arrow extends the
+      // selection and Ctrl+Arrow jumps by word.
+      if (e.key in KEY_VK) {
+        sendKey(e.key, e.code || e.key, KEY_VK[e.key], modifiers);
+        e.preventDefault();
+        return;
+      }
+      // Ctrl/Cmd shortcuts on a letter (select-all, copy, cut, undo/redo) — forwarded so the
+      // remote page performs them. Printable typing (no ctrl/meta) is left to beforeinput.
+      if (ctrlish && e.key.length === 1) {
+        const upper = e.key.toUpperCase();
+        sendKey(e.key, e.code || `Key${upper}`, upper.charCodeAt(0), modifiers);
         e.preventDefault();
       }
     };
@@ -243,7 +259,9 @@ export default function LoginSessionPage() {
               (Ctrl/Cmd+V) all work. When you&apos;ve finished signing in:
             </p>
             {captureButton}
-            {relayError && (
+            {/* On success the worker closes the browser (sends "gone"); don't flash that as an
+                error while we're capturing. */}
+            {relayError && !capturing && (
               <p style={{ color: "var(--uc-danger, #f87171)", fontSize: 13, marginTop: 8 }}>{relayError}</p>
             )}
           </div>

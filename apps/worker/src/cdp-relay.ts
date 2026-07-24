@@ -67,9 +67,11 @@ export async function startCdpRelay(
             code: msg.code,
             text: msg.text,
             // Editing/navigation keys (Backspace, Delete, arrows, Enter) only take effect when
-            // the virtual-key code is supplied.
+            // the virtual-key code is supplied; modifiers carry Shift/Ctrl/Cmd for selection
+            // extension, word jumps and Ctrl/Cmd+A/C/X/Z shortcuts.
             windowsVirtualKeyCode: msg.vk,
             nativeVirtualKeyCode: msg.vk,
+            modifiers: msg.modifiers,
           });
           break;
         case "text":
