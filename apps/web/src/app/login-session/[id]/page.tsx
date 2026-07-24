@@ -183,7 +183,10 @@ export default function LoginSessionPage() {
   const button = (e: React.MouseEvent) => (e.button === 2 ? "right" : e.button === 1 ? "middle" : "left");
 
   const onMouseDown = (e: React.MouseEvent) => {
-    taRef.current?.focus(); // route the keyboard to the hidden capture textarea
+    // Prevent the default focus change (the canvas isn't focusable, so the browser would blur
+    // our capture textarea and keystrokes would go nowhere), then route the keyboard to it.
+    e.preventDefault();
+    taRef.current?.focus();
     send({ t: "mouse", kind: "down", ...pointer(e), button: button(e), buttons: e.buttons });
   };
   const onMouseUp = (e: React.MouseEvent) =>
