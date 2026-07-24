@@ -66,6 +66,10 @@ export async function startCdpRelay(
             key: msg.key,
             code: msg.code,
             text: msg.text,
+            // Editing/navigation keys (Backspace, Delete, arrows, Enter) only take effect when
+            // the virtual-key code is supplied.
+            windowsVirtualKeyCode: msg.vk,
+            nativeVirtualKeyCode: msg.vk,
           });
           break;
         case "text":
@@ -148,16 +152,38 @@ async function dispatchMouse(
   msg: Extract<ClientToWorkerMsg, { t: "mouse" }>,
 ): Promise<void> {
   const button = CDP_MOUSE_BUTTON[msg.button ?? "left"];
-  const common = { x: msg.x, y: msg.y, button, clickCount: 1 };
+  // Bitmask of buttons currently held (MouseEvent.buttons). Passed through so a press-move-release
+  // sequence reads as a drag/selection, not a hover.
+  const buttons = msg.buttons ?? 0;
   if (msg.kind === "move") {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: msg.x, y: msg.y });
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: msg.x,
+      y: msg.y,
+      button: buttons ? button : "none",
+      buttons,
+    });
   } else if (msg.kind === "down") {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...common });
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: msg.x,
+      y: msg.y,
+      button,
+      buttons: buttons || 1,
+      clickCount: 1,
+    });
   } else if (msg.kind === "up") {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...common });
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: msg.x,
+      y: msg.y,
+      button,
+      buttons: 0,
+      clickCount: 1,
+    });
   } else {
     // click = press + release at the same point
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...common });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...common });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: msg.x, y: msg.y, button, buttons: 1, clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: msg.x, y: msg.y, button, buttons: 0, clickCount: 1 });
   }
 }

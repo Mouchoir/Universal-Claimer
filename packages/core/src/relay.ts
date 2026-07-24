@@ -22,9 +22,13 @@ export type WorkerToClientMsg =
 
 /** Client → worker (operator input). Coordinates are already in viewport CSS px. */
 export type ClientToWorkerMsg =
-  | { t: "mouse"; kind: MouseKind; x: number; y: number; button?: MouseButton }
+  // `buttons` is the pressed-button bitmask (as in MouseEvent.buttons) — required on drag moves
+  // so CDP treats them as a selection drag rather than a plain hover.
+  | { t: "mouse"; kind: MouseKind; x: number; y: number; button?: MouseButton; buttons?: number }
   | { t: "wheel"; x: number; y: number; dy: number }
-  | { t: "key"; action: KeyAction; key: string; code?: string; text?: string }
+  // `vk` is the Windows virtual-key code; CDP needs it for editing/navigation keys (Backspace,
+  // Delete, arrows, Enter…) to actually take effect.
+  | { t: "key"; action: KeyAction; key: string; code?: string; text?: string; vk?: number }
   | { t: "text"; text: string };
 
 export type RelayMsg = WorkerToClientMsg | ClientToWorkerMsg;

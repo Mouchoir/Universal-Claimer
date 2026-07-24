@@ -13,6 +13,14 @@ type Msg =
   | { t: "frame"; data: string; format: string; w: number; h: number }
   | { t: "gone" };
 
+// Editing / navigation keys → Windows virtual-key codes. CDP needs the vk for these to take
+// effect; printable characters and paste go through insertText instead (see onBeforeInput).
+const KEY_VK: Record<string, number> = {
+  Backspace: 8, Delete: 46, Enter: 13, Tab: 9, Escape: 27,
+  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+  Home: 36, End: 35, PageUp: 33, PageDown: 34,
+};
+
 /** Map a pointer position on the canvas to CloakBrowser viewport CSS px (see @uc/core). */
 function mapPointer(clientX: number, clientY: number, dispW: number, dispH: number) {
   if (dispW <= 0 || dispH <= 0) return { x: 0, y: 0 };
@@ -23,12 +31,6 @@ function mapPointer(clientX: number, clientY: number, dispW: number, dispH: numb
   };
 }
 
-// Control keys forwarded as key events; everything printable goes through insertText (t:"text").
-const CONTROL_KEYS = new Set([
-  "Enter", "Backspace", "Delete", "Tab", "Escape",
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
-]);
-
 export default function LoginSessionPage() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
@@ -37,6 +39,7 @@ export default function LoginSessionPage() {
   const [capturing, setCapturing] = useState(false);
   const [relayError, setRelayError] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -69,6 +72,14 @@ export default function LoginSessionPage() {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }, []);
+
+  const sendKey = useCallback(
+    (key: string, code: string, vk: number | undefined) => {
+      send({ t: "key", action: "down", key, code, vk });
+      send({ t: "key", action: "up", key, code, vk });
+    },
+    [send],
+  );
 
   // Open the relay WebSocket once we are awaiting login in relay mode.
   useEffect(() => {
@@ -108,6 +119,49 @@ export default function LoginSessionPage() {
     };
   }, [embedRelay, status, id]);
 
+  // Keyboard + paste are captured on a hidden, focused textarea: a <canvas> is not editable, so
+  // it never receives paste/beforeinput events. Native listeners are the most reliable path.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !embedRelay || status !== "awaiting_user") return;
+    ta.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      // Editing/navigation keys. Ctrl/Cmd combos flow through to the paste handler.
+      if (e.key in KEY_VK && !e.ctrlKey && !e.metaKey) {
+        sendKey(e.key, e.code || e.key, KEY_VK[e.key]);
+        e.preventDefault();
+      }
+    };
+    const onBefore = (e: InputEvent) => {
+      const it = e.inputType;
+      if (
+        it === "insertText" ||
+        it === "insertReplacementText" ||
+        it === "insertCompositionText"
+      ) {
+        if (e.data) send({ t: "text", text: e.data });
+        e.preventDefault();
+      }
+      // Deletion is handled via keydown (Backspace/Delete) so it works on the empty textarea;
+      // paste is handled by the paste listener below.
+    };
+    const onPasteEv = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text");
+      if (text) send({ t: "text", text });
+      e.preventDefault();
+    };
+
+    ta.addEventListener("keydown", onKey);
+    ta.addEventListener("beforeinput", onBefore);
+    ta.addEventListener("paste", onPasteEv);
+    return () => {
+      ta.removeEventListener("keydown", onKey);
+      ta.removeEventListener("beforeinput", onBefore);
+      ta.removeEventListener("paste", onPasteEv);
+    };
+  }, [embedRelay, status, send, sendKey]);
+
   function drawFrame(msg: { data: string; format: string; w: number; h: number }) {
     const canvas = canvasRef.current;
     const img = imgRef.current;
@@ -128,29 +182,18 @@ export default function LoginSessionPage() {
   }
   const button = (e: React.MouseEvent) => (e.button === 2 ? "right" : e.button === 1 ? "middle" : "left");
 
-  const onMouseDown = (e: React.MouseEvent) => send({ t: "mouse", kind: "down", ...pointer(e), button: button(e) });
-  const onMouseUp = (e: React.MouseEvent) => send({ t: "mouse", kind: "up", ...pointer(e), button: button(e) });
+  const onMouseDown = (e: React.MouseEvent) => {
+    taRef.current?.focus(); // route the keyboard to the hidden capture textarea
+    send({ t: "mouse", kind: "down", ...pointer(e), button: button(e), buttons: e.buttons });
+  };
+  const onMouseUp = (e: React.MouseEvent) =>
+    send({ t: "mouse", kind: "up", ...pointer(e), button: button(e), buttons: e.buttons });
   const onMouseMove = (e: React.MouseEvent) => {
-    if (e.buttons) send({ t: "mouse", kind: "move", ...pointer(e) });
+    if (e.buttons) send({ t: "mouse", kind: "move", ...pointer(e), buttons: e.buttons });
   };
   const onWheel = (e: React.WheelEvent) => {
     const p = pointer(e as unknown as React.MouseEvent);
     send({ t: "wheel", x: p.x, y: p.y, dy: Math.round(e.deltaY) });
-  };
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey || e.metaKey) return; // let copy/paste shortcuts through to the paste handler
-    if (CONTROL_KEYS.has(e.key)) {
-      send({ t: "key", action: "down", key: e.key, code: e.code });
-      e.preventDefault();
-    } else if (e.key.length === 1) {
-      send({ t: "text", text: e.key });
-      e.preventDefault();
-    }
-  };
-  const onPaste = (e: React.ClipboardEvent) => {
-    const text = e.clipboardData.getData("text");
-    if (text) send({ t: "text", text });
-    e.preventDefault();
   };
 
   async function confirm() {
@@ -193,8 +236,8 @@ export default function LoginSessionPage() {
               <strong>Sign in in the live view below, then capture your session.</strong>
             </p>
             <p style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
-              Click inside the view to focus it. Typing and paste (Ctrl/Cmd+V) both work. When
-              you&apos;ve finished signing in:
+              Click inside the view to focus it. Typing, editing, text selection and paste
+              (Ctrl/Cmd+V) all work. When you&apos;ve finished signing in:
             </p>
             {captureButton}
             {relayError && (
@@ -202,23 +245,28 @@ export default function LoginSessionPage() {
             )}
           </div>
 
+          {/* Hidden capture surface for keyboard + paste (canvas can't receive those). */}
+          <textarea
+            ref={taRef}
+            aria-hidden="true"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            style={{ position: "fixed", top: 0, left: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none", zIndex: -1 }}
+          />
           <canvas
             ref={canvasRef}
             width={VIEW_W}
             height={VIEW_H}
-            tabIndex={0}
             onMouseDown={onMouseDown}
             onMouseUp={onMouseUp}
             onMouseMove={onMouseMove}
             onWheel={onWheel}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
             onContextMenu={(e) => e.preventDefault()}
             style={{
               width: "100%",
               display: "block",
-              outline: "none",
-              cursor: "crosshair",
+              cursor: "text",
               border: "1px solid var(--uc-border)",
               borderRadius: "var(--uc-radius)",
               background: "#000",
