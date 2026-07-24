@@ -27,8 +27,10 @@ export type ClientToWorkerMsg =
   | { t: "mouse"; kind: MouseKind; x: number; y: number; button?: MouseButton; buttons?: number }
   | { t: "wheel"; x: number; y: number; dy: number }
   // `vk` is the Windows virtual-key code; CDP needs it for editing/navigation keys (Backspace,
-  // Delete, arrows, Enter…) to actually take effect.
-  | { t: "key"; action: KeyAction; key: string; code?: string; text?: string; vk?: number }
+  // Delete, arrows, Enter…) to actually take effect. `modifiers` is the CDP modifier bitmask
+  // (Alt=1, Ctrl=2, Meta=4, Shift=8) so Shift+Arrow (extend selection), Ctrl+Arrow (word jump)
+  // and Ctrl/Cmd+A/C/X/Z shortcuts work.
+  | { t: "key"; action: KeyAction; key: string; code?: string; text?: string; vk?: number; modifiers?: number }
   | { t: "text"; text: string };
 
 export type RelayMsg = WorkerToClientMsg | ClientToWorkerMsg;
