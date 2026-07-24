@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   jobViewSchema,
-  loginInputSchema,
   missingConfigKeys,
   scheduleSchema,
   sseJobsEventSchema,
@@ -39,14 +38,6 @@ describe("jobs & SSE payload contract", () => {
   it("validates the SSE jobs event envelope", () => {
     expect(sseJobsEventSchema.safeParse({ type: "jobs", jobs: [job] }).success).toBe(true);
     expect(sseJobsEventSchema.safeParse({ type: "other", jobs: [] }).success).toBe(false);
-  });
-
-  it("validates login input events by kind", () => {
-    expect(loginInputSchema.safeParse({ kind: "click", x: 10, y: 20 }).success).toBe(true);
-    expect(loginInputSchema.safeParse({ kind: "type", text: "hello" }).success).toBe(true);
-    expect(loginInputSchema.safeParse({ kind: "key", key: "Enter" }).success).toBe(true);
-    expect(loginInputSchema.safeParse({ kind: "click", x: 10 }).success).toBe(false);
-    expect(loginInputSchema.safeParse({ kind: "bogus" }).success).toBe(false);
   });
 
   it("validates schedules and requires dayOfWeek for weekly", () => {

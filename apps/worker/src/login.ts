@@ -9,39 +9,29 @@ import {
   type SessionHandle,
 } from "@uc/connectors";
 import {
-  clearLoginFrame,
   createAccount,
-  drainInputs as dbDrainInputs,
   getLoginSession,
-  setLoginFrame,
   setLoginStatus,
   type Database,
-  type InputEvent,
 } from "@uc/db";
+import { startCdpRelay, type CdpRelay } from "./cdp-relay.js";
 import type { LoginDeps, LoginJob } from "./run-login.js";
 
-async function applyInput(page: Page, ev: InputEvent): Promise<void> {
-  const p = ev.payload;
-  switch (ev.kind) {
-    case "click":
-      await page.mouse.click(Number(p.x), Number(p.y));
-      break;
-    case "type":
-      await page.keyboard.type(String(p.text ?? ""));
-      break;
-    case "key":
-      await page.keyboard.press(String(p.key ?? ""));
-      break;
-    case "scroll":
-      await page.mouse.wheel(0, Number(p.dy ?? 0));
-      break;
-  }
+/** Read the headless-relay configuration from the environment (docs/design/cdp-relay.md). */
+function relayConfig(): { enabled: boolean; webUrl: string; token: string } {
+  return {
+    enabled: process.env.LOGIN_RELAY_EMBED === "true",
+    webUrl: process.env.RELAY_INTERNAL_URL ?? "ws://web:8080",
+    token: process.env.RELAY_TOKEN ?? "",
+  };
 }
 
 /**
  * Build the production dependencies for {@link runLogin}: launch CloakBrowser at the
- * connector's login page, relay screenshot frames + operator inputs, and on success capture
- * the cookies and store them as a session_import account (docs/design/assisted-login.md).
+ * connector's login page. In headless deployments (LOGIN_RELAY_EMBED=true) it also starts the
+ * CDP screencast relay so the operator can log in from the wizard; locally the operator uses
+ * the native window. On success it captures the cookies and stores them as a session_import
+ * account (docs/design/assisted-login.md, cdp-relay.md).
  */
 export function makeLoginDeps(args: {
   db: Database;
@@ -57,7 +47,9 @@ export function makeLoginDeps(args: {
     throw new Error(`connector ${job.serviceId} does not support assisted login`);
   }
 
+  const relayCfg = relayConfig();
   let handle: SessionHandle | null = null;
+  let relay: CdpRelay | null = null;
   const pageOf = async (ctxt: BrowserContext): Promise<Page> => {
     const pages = ctxt.pages();
     return pages[0] ?? (await ctxt.newPage());
@@ -68,22 +60,23 @@ export function makeLoginDeps(args: {
       handle = await browser.launch(defaultFingerprint());
       const page = await pageOf(handle.context);
       await page.goto(connector.loginUrl, { waitUntil: "domcontentloaded" });
+      if (relayCfg.enabled) {
+        if (relayCfg.token) {
+          relay = await startCdpRelay(handle.context, page, {
+            webUrl: relayCfg.webUrl,
+            token: relayCfg.token,
+            sessionId: job.sessionId,
+            log: ctx.log,
+          });
+        } else {
+          ctx.log.warn("LOGIN_RELAY_EMBED set but RELAY_TOKEN missing; relay disabled");
+        }
+      }
       return handle;
     },
     closeSession: async (session) => {
-      await clearLoginFrame(db, job.sessionId);
+      await relay?.stop();
       await browser.close(session as SessionHandle);
-    },
-    captureFrame: async (session, sessionId) => {
-      const page = await pageOf((session as SessionHandle).context);
-      const png = await page.screenshot();
-      await setLoginFrame(db, sessionId, png);
-    },
-    drainInputs: async (session, sessionId) => {
-      const events = await dbDrainInputs(db, sessionId);
-      if (events.length === 0) return;
-      const page = await pageOf((session as SessionHandle).context);
-      for (const ev of events) await applyInput(page, ev);
     },
     // Non-navigating: the loop must NOT reload the page while the operator is logging in.
     // Capture is triggered when the operator confirms they have finished.

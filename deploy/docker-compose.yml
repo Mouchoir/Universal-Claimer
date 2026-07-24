@@ -37,6 +37,10 @@ services:
       DATABASE_URL: postgres://uc:uc@postgres:5432/uc
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in deploy/.env}
       PORT: 8080
+      # Headless deployment: relay the login page into the wizard over the CDP screencast
+      # WebSocket (docs/design/cdp-relay.md). RELAY_TOKEN guards the internal worker→web leg.
+      LOGIN_RELAY_EMBED: "true"
+      RELAY_TOKEN: ${RELAY_TOKEN:?set RELAY_TOKEN in deploy/.env}
     ports:
       - "${PORT:-8080}:8080"
     depends_on:
@@ -62,6 +66,10 @@ services:
     environment:
       DATABASE_URL: postgres://uc:uc@postgres:5432/uc
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in deploy/.env}
+      # Start the CDP screencast relay and connect to the web's WebSocket bridge by service name.
+      LOGIN_RELAY_EMBED: "true"
+      RELAY_TOKEN: ${RELAY_TOKEN:?set RELAY_TOKEN in deploy/.env}
+      RELAY_INTERNAL_URL: ws://web:8080
     # x86_64 host required (CloakBrowser binary). Runs the browser headed under Xvfb.
     depends_on:
       postgres:
