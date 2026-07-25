@@ -36,7 +36,70 @@ export interface EpicPageDriver {
 export type EpicDriverFactory = (session: SessionHandle) => EpicPageDriver;
 
 const ACCOUNT_URL = "https://www.epicgames.com/account/personal";
-const FREE_GAMES_URL = "https://store.epicgames.com/en-US/free-games";
+// Epic's public free-games promotions feed — the source of truth for what is free right now,
+// independent of the store UI's language and lazy-loaded rendering (the DOM-scraping approach
+// broke when the logged-in store rendered in the account's locale). Same feed the reference
+// project epicgames-freegames-node relies on.
+const PROMOTIONS_URL = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions";
+const STORE_PRODUCT_BASE = "https://store.epicgames.com/p/";
+
+/** Shape of the fields we read from the promotions feed (everything else is ignored). */
+interface PromoElement {
+  title?: string;
+  productSlug?: string | null;
+  urlSlug?: string | null;
+  offerMappings?: { pageSlug?: string; pageType?: string }[] | null;
+  catalogNs?: { mappings?: { pageSlug?: string; pageType?: string }[] | null } | null;
+  promotions?: {
+    promotionalOffers?: {
+      promotionalOffers?: {
+        startDate?: string;
+        endDate?: string;
+        discountSetting?: { discountPercentage?: number | string };
+      }[];
+    }[];
+  } | null;
+}
+
+function productHomeSlug(mappings?: { pageSlug?: string; pageType?: string }[] | null): string | undefined {
+  if (!mappings || mappings.length === 0) return undefined;
+  return (mappings.find((m) => m.pageType === "productHome") ?? mappings[0])?.pageSlug;
+}
+
+/**
+ * Parse the promotions feed into the games that are free *right now* (a promotional offer whose
+ * window contains `now` and whose remaining price percentage is 0). Pure + unit-tested; the
+ * driver only supplies the fetched JSON and the clock.
+ */
+export function parseFreeGamesResponse(json: unknown, now: number): FreeGame[] {
+  const elements =
+    (json as { data?: { Catalog?: { searchStore?: { elements?: PromoElement[] } } } })?.data
+      ?.Catalog?.searchStore?.elements ?? [];
+  const out: FreeGame[] = [];
+  const seen = new Set<string>();
+  for (const e of elements) {
+    const groups = e.promotions?.promotionalOffers ?? [];
+    const freeNow = groups.some((g) =>
+      (g.promotionalOffers ?? []).some((o) => {
+        const start = o.startDate ? Date.parse(o.startDate) : NaN;
+        const end = o.endDate ? Date.parse(o.endDate) : NaN;
+        const pct = Number(o.discountSetting?.discountPercentage);
+        return Number.isFinite(start) && Number.isFinite(end) && start <= now && now <= end && pct === 0;
+      }),
+    );
+    if (!freeNow) continue;
+    const slug =
+      productHomeSlug(e.offerMappings) ??
+      productHomeSlug(e.catalogNs?.mappings) ??
+      e.productSlug ??
+      e.urlSlug ??
+      undefined;
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push({ title: (e.title ?? slug).trim(), url: `${STORE_PRODUCT_BASE}${slug}` });
+  }
+  return out;
+}
 
 /**
  * Real Playwright-backed driver. Selectors target the current Epic UI and are best-effort:
@@ -96,73 +159,80 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
   }
 
   async listClaimableGames(): Promise<FreeGame[]> {
-    const page = await this.page();
-    await page.goto(FREE_GAMES_URL, { waitUntil: "domcontentloaded" });
-    // Give the free-games grid a moment to render.
-    await page.waitForTimeout(1500).catch(() => undefined);
-    // Free-now games are anchors whose aria-label contains "Free Now"; the title sits
-    // between the second "Free Now," and ", Free Now -" (validated against the live page).
-    const games = await page
-      .evaluate(() => {
-        const seen = new Set<string>();
-        const out: { title: string; url: string }[] = [];
-        for (const a of Array.from(document.querySelectorAll("a[aria-label]"))) {
-          const label = a.getAttribute("aria-label") ?? "";
-          if (!/Free Now/i.test(label)) continue;
-          const href = a.getAttribute("href") ?? "";
-          if (!href.includes("/p/")) continue;
-          if (seen.has(href)) continue;
-          seen.add(href);
-          const m = label.match(/Free Now,\s*(.+?),\s*Free Now\s*-/i);
-          out.push({ title: (m?.[1] ?? a.textContent ?? "").trim(), url: href });
-        }
-        return out;
-      })
-      .catch(() => [] as { title: string; url: string }[]);
-    return games.map((g) => ({
-      title: g.title,
-      url: g.url.startsWith("http") ? g.url : `https://store.epicgames.com${g.url}`,
-    }));
+    // Locale only affects the returned titles; the free-now determination is language-agnostic.
+    // Country can affect regional availability, but Epic's weekly free games are global.
+    const locale = process.env.EPIC_LOCALE ?? "en-US";
+    const country = process.env.EPIC_COUNTRY ?? "US";
+    const url = `${PROMOTIONS_URL}?locale=${encodeURIComponent(locale)}&country=${encodeURIComponent(country)}&allowCountries=${encodeURIComponent(country)}`;
+    try {
+      // Fetch through the browser context so any per-account proxy + cookies apply.
+      const resp = await this.context.request.get(url);
+      if (!resp.ok()) return [];
+      const json = (await resp.json()) as unknown;
+      return parseFreeGamesResponse(json, Date.now());
+    } catch {
+      return [];
+    }
   }
 
   async claimGame(
     game: FreeGame,
   ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }> {
     const page = await this.page();
-    await page.goto(game.url, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1200).catch(() => undefined);
-    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+    if (await this.isOwned(game.url)) return { claimed: false, alreadyOwned: true };
 
-    // The purchase CTA (stable testid). Its label tells us if the game is already owned.
     const cta = page.locator("[data-testid='purchase-cta-button']").first();
     if ((await cta.count().catch(() => 0)) === 0) return { claimed: false, alreadyOwned: true };
-    const ctaText = ((await cta.textContent().catch(() => "")) ?? "").toLowerCase();
-    if (/in library|owned|biblioth|dans la biblioth|installer|install/i.test(ctaText)) {
-      return { claimed: false, alreadyOwned: true };
-    }
-
     await cta.click().catch(() => undefined);
-    // The purchase overlay (iframe) loads. Best-effort: place the order and accept any EULA,
-    // searching the main page + all frames. This checkout flow is the part most likely to
-    // need live tuning per Epic UI changes.
-    await page.waitForTimeout(2500).catch(() => undefined);
-    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
 
-    const clickInAnyFrame = async (re: RegExp): Promise<void> => {
-      for (const frame of page.frames()) {
-        const btn = frame.getByRole("button", { name: re }).first();
-        if (await btn.count().catch(() => 0)) {
-          await btn.click({ timeout: 6000 }).catch(() => undefined);
-          return;
-        }
-      }
-    };
-    await clickInAnyFrame(/place order|passer la commande/i);
-    await clickInAnyFrame(/i agree|j['’]accepte|accept/i);
-    await page.waitForTimeout(2500).catch(() => undefined);
-    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+    // The free-checkout opens in a store.epicgames.com/purchase iframe whose confirm button is
+    // "Add to library" (paid titles say "Place Order"). An *invisible* hCaptcha runs on submit
+    // and passes automatically for a genuine session. Click confirm (+ any EULA) in that frame.
+    const purchase = await this.waitForFrame(page, /\/purchase/, 12_000);
+    if (purchase) {
+      const confirm = purchase
+        .getByRole("button", {
+          name: /add to library|place order|ajouter .*biblioth|passer la commande|obtenir/i,
+        })
+        .first();
+      await confirm.click({ timeout: 10_000 }).catch(() => undefined);
+      const agree = purchase
+        .getByRole("button", { name: /i agree|accept|j['’]accepte/i })
+        .first();
+      await agree.click({ timeout: 4000 }).catch(() => undefined);
+    }
+    await page.waitForTimeout(5000).catch(() => undefined);
 
-    return { claimed: true };
+    // Verify: only report success if the game is actually in the library now. Otherwise the
+    // checkout did not complete (e.g. an interactive hCaptcha challenge) — report honestly
+    // rather than claiming a phantom success.
+    if (await this.isOwned(game.url)) return { claimed: true };
+    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
+    return { claimed: false };
+  }
+
+  /** Load the product page and decide whether the account already owns it (CTA is "In Library"). */
+  private async isOwned(url: string): Promise<boolean> {
+    const page = await this.page();
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page
+      .waitForSelector("[data-testid='purchase-cta-button']", { timeout: 12_000 })
+      .catch(() => undefined);
+    const cta = page.locator("[data-testid='purchase-cta-button']").first();
+    if ((await cta.count().catch(() => 0)) === 0) return false;
+    const label = ((await cta.textContent().catch(() => "")) ?? "").toLowerCase();
+    return /in library|owned|installer|install|dans la biblioth|biblioth[eè]que/i.test(label);
+  }
+
+  /** Poll the page's frames for one whose URL matches, up to `timeoutMs`. */
+  private async waitForFrame(page: Page, re: RegExp, timeoutMs: number) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const frame = page.frames().find((f) => re.test(f.url()));
+      if (frame) return frame;
+      await page.waitForTimeout(300).catch(() => undefined);
+    }
+    return undefined;
   }
 
   async getCookies(): Promise<BrowserCookie[]> {

@@ -165,18 +165,26 @@ browser or an extension is required). **Iteration 1 DONE + tested** (88 tests): 
 `InteractiveLogin` capability (`loginUrl`/`isLoggedIn`/`extractCookies`, Epic impl +
 driver `getCookies`/`goto`), worker `runLogin` orchestration (launch → poll-until-logged-in →
 capture+store → close, with timeout/failure handling; unit-tested with fakes). Works in
-local-display mode today. **Iteration 2 DONE (headless relay, code-complete + compiles/tests/next-build):** `login_session`
-+ `login_input` tables (migration 0001), `login` pg-boss queue, db data-access (`login.ts`),
-worker `login` handler wiring (`login.ts` builds LoginDeps: launch CloakBrowser → screenshot
-frames → apply relayed clicks/keys via page.mouse/keyboard → capture cookies → store as a
+local-display mode today. **Iteration 2 DONE + live-validated:** `login_session` table, `login`
+pg-boss queue, db data-access (`login.ts`), worker `login` handler wiring (builds LoginDeps:
+launch CloakBrowser → wait for the operator's confirm → capture cookies → store as a
 session_import account), API (`POST /api/services/[id]/login-session`, `GET
-/api/login-sessions/[id]`, `GET .../frame` (PNG), `POST .../input`), UI (connect page "Log in
-for me" button + `/login-session/[id]` canvas that shows frames and relays clicks/keystrokes),
-security notice shown. **89 tests green.** Security: `drainInputs` DELETEs input rows on read
-so relayed password keystrokes don't linger in the DB; frames show the password as dots; only
-encrypted session cookies are stored. **NOT yet run live** (relay needs the CloakBrowser binary
-+ full stack; a successful capture also needs a real login). Cosmetic TODO: the login canvas
-page title is a hardcoded placeholder ("the service").
+/api/login-sessions/[id]`, `POST .../confirm`), UI (connect page "Log in for me" button +
+`/login-session/[id]`), security notice shown.
+
+**Wizard is mode-aware (feat/007):** local deployments use the **native CloakBrowser window**;
+headless/remote deployments (container on a NAS, wizard reached from another machine, where the
+window is invisible to the operator) use the **CDP screencast relay** (docs/design/cdp-relay.md):
+`Page.startScreencast` JPEG frames + `Input.insertText`/dispatch over a **same-origin WebSocket**
+bridged by a custom Next server (`apps/web/server.mjs`), authorized by a short-lived relay
+ticket (client) / `RELAY_TOKEN` (worker). Fluid + copy-paste, no lag. **The old screenshot-in-DB
++ `login_input` relay was removed** (migration 0006 drops the table + `frame` column); frames and
+keystrokes are now event-driven and **never persisted** (stronger Principle II). Shared protocol
++ coordinate mapping + ticket + bridge live in `@uc/core` (`relay*.ts`), unit-tested. Gated by
+`LOGIN_RELAY_EMBED` (web + worker). **Live-validated locally:** bridge auth/forwarding (6/6) and
+a real Epic login page streamed 73 JPEG frames end-to-end (worker CDP → web bridge → client).
+Cosmetic TODO: the login page title is a hardcoded placeholder ("the service"). Epic checkout
+(Get→Place Order across the purchase iframe) remains best-effort, needs live tuning.
 
 Note: spec-kit commands in this repo are GitHub Copilot prompts under `.github/prompts/`;
 the PowerShell scripts under `.specify/scripts/powershell/` do the file scaffolding.

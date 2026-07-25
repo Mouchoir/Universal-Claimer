@@ -51,14 +51,6 @@ export const scheduleSchema = z
     message: "weekly schedule requires a dayOfWeek (0-6)",
   });
 
-/** An operator input event relayed to a login session (assisted login). */
-export const loginInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("click"), x: z.number(), y: z.number() }),
-  z.object({ kind: z.literal("type"), text: z.string() }),
-  z.object({ kind: z.literal("key"), key: z.string() }),
-  z.object({ kind: z.literal("scroll"), dy: z.number() }),
-]);
-
 export const connectAccountSchema = z.discriminatedUnion("method", [
   z.object({
     serviceId: z.string(),
