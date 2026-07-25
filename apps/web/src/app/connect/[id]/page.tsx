@@ -22,7 +22,24 @@ export default function ConnectPage() {
   const [password, setPassword] = useState("");
   const [totpSeed, setTotpSeed] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+
+  /** Validate required connector config fields client-side; highlight + focus the first empty one. */
+  function validateConfig(): boolean {
+    const errs: Record<string, string> = {};
+    for (const f of configFields) {
+      if (f.required && !(config[f.key] ?? "").trim()) errs[f.key] = `${f.label} is required.`;
+    }
+    setFieldErrors(errs);
+    const first = Object.keys(errs)[0];
+    if (first) {
+      const el = document.getElementById(`cfg-${first}`);
+      el?.scrollIntoView({ block: "center", behavior: "smooth" });
+      el?.focus();
+    }
+    return Object.keys(errs).length === 0;
+  }
 
   useEffect(() => {
     fetch(`/api/services/${serviceId}/tos`)
@@ -47,6 +64,7 @@ export default function ConnectPage() {
 
   async function startAssisted() {
     setError(null);
+    if (!validateConfig()) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/services/${serviceId}/login-session`, {
@@ -69,6 +87,7 @@ export default function ConnectPage() {
   async function connect(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!validateConfig()) return;
     setBusy(true);
     try {
       const body: Record<string, unknown> = { serviceId, method, config, proxy: proxy || undefined };
@@ -122,11 +141,30 @@ export default function ConnectPage() {
                     {f.required ? " *" : ""}
                   </span>
                   <input
+                    id={`cfg-${f.key}`}
                     value={config[f.key] ?? ""}
                     placeholder={f.placeholder}
                     required={f.required}
-                    onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}
+                    aria-invalid={fieldErrors[f.key] ? true : undefined}
+                    style={
+                      fieldErrors[f.key]
+                        ? { border: "1px solid var(--uc-danger)", outlineColor: "var(--uc-danger)" }
+                        : undefined
+                    }
+                    onChange={(e) => {
+                      setConfig({ ...config, [f.key]: e.target.value });
+                      if (fieldErrors[f.key]) {
+                        setFieldErrors((prev) => {
+                          const next = { ...prev };
+                          delete next[f.key];
+                          return next;
+                        });
+                      }
+                    }}
                   />
+                  {fieldErrors[f.key] && (
+                    <span style={{ color: "var(--uc-danger)", fontSize: 13 }}>{fieldErrors[f.key]}</span>
+                  )}
                 </label>
               ))}
             </div>
