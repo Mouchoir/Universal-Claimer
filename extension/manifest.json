@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Universal Claimer — Session Exporter",
+  "version": "0.1.0",
+  "description": "Export your logged-in session cookies locally to connect an account in your self-hosted Universal Claimer. Never sends your data anywhere.",
+  "permissions": ["cookies", "activeTab", "clipboardWrite"],
+  "host_permissions": [
+    "https://*.twitch.tv/*",
+    "https://*.epicgames.com/*",
+    "https://*.microsoft.com/*",
+    "https://*.live.com/*",
+    "https://*.bing.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Universal Claimer Session Exporter"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "universal-claimer-session-exporter@mouchoir.github.io",
+      "strict_min_version": "115.0"
+    }
+  }
+}
