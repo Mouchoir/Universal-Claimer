@@ -5,8 +5,6 @@ function makeDeps(over: {
   loggedInAfter: number; // becomes logged-in on the Nth poll (1-based); Infinity = never
 }): { deps: LoginDeps; calls: Record<string, unknown[]>; time: { t: number } } {
   const calls: Record<string, unknown[]> = {
-    frames: [],
-    inputs: [],
     store: [],
     status: [],
     close: [],
@@ -16,8 +14,6 @@ function makeDeps(over: {
   const deps: LoginDeps = {
     openSession: async () => ({ id: "sess" }),
     closeSession: async (s) => void calls.close!.push(s),
-    captureFrame: async (_s, id) => void calls.frames!.push(id),
-    drainInputs: async (_s, id) => void calls.inputs!.push(id),
     isLoggedIn: async () => {
       checks += 1;
       return checks >= over.loggedInAfter;
@@ -41,9 +37,6 @@ describe("runLogin", () => {
     expect(calls.status).toEqual(["awaiting_user", "connected"]);
     expect(calls.store).toHaveLength(1);
     expect(calls.close).toHaveLength(1);
-    // Relay ran each iteration until success.
-    expect(calls.frames!.length).toBeGreaterThanOrEqual(2);
-    expect(calls.inputs!.length).toBe(calls.frames!.length);
   });
 
   it("times out if the operator never logs in, and always closes the browser", async () => {

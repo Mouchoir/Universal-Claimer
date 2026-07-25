@@ -102,6 +102,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
       }
 
       const claimed: string[] = [];
+      const failed: string[] = [];
       for (const game of games) {
         let res = await driver.claimGame(game);
         if (res.captcha) {
@@ -123,15 +124,23 @@ export class EpicConnector implements Connector, InteractiveLogin {
           }
         }
         if (res.claimed) claimed.push(game.title);
+        else if (!res.alreadyOwned) failed.push(game.title); // neither claimed nor already owned
       }
 
-      if (claimed.length === 0) {
+      if (claimed.length > 0) {
+        const suffix = failed.length ? `; could not complete: ${failed.join(", ")}` : "";
+        return { outcome: "claimed", summary: `Claimed: ${claimed.join(", ")}${suffix}` };
+      }
+      if (failed.length > 0) {
         return {
-          outcome: "nothing_to_claim",
-          summary: `Nothing new to claim (${games.length} free game(s) already owned).`,
+          outcome: "failed",
+          summary: `Found free game(s) but could not complete checkout for: ${failed.join(", ")}.`,
         };
       }
-      return { outcome: "claimed", summary: `Claimed: ${claimed.join(", ")}` };
+      return {
+        outcome: "nothing_to_claim",
+        summary: `Nothing new to claim (${games.length} free game(s) already owned).`,
+      };
     } finally {
       await ctx.browser.close(session);
     }

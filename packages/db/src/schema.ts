@@ -158,8 +158,10 @@ export const schedule = pgTable(
 
 /**
  * Assisted-login session: the operator logs in inside the instance-controlled browser and
- * cookies are captured automatically (docs/design/assisted-login.md). `frame` holds the
- * latest transient screenshot relayed to the dashboard (headless mode).
+ * cookies are captured automatically (docs/design/assisted-login.md). In headless deployments
+ * the login page is relayed over the CDP screencast WebSocket (docs/design/cdp-relay.md) —
+ * frames and input are event-driven and never persisted, so there is no frame column or input
+ * table.
  */
 export const loginSession = pgTable("login_session", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -175,21 +177,8 @@ export const loginSession = pgTable("login_session", {
   // Optional proxy (encrypted) carried through assisted login onto the created account.
   proxyCiphertext: bytea("proxy_ciphertext"),
   proxyDataKey: bytea("proxy_data_key"),
-  frame: bytea("frame"), // latest screenshot (transient; cleared when the session ends)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-/** Operator input events for a login session (dashboard → worker relay). FIFO by createdAt. */
-export const loginInput = pgTable("login_input", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  sessionId: uuid("session_id")
-    .notNull()
-    .references(() => loginSession.id, { onDelete: "cascade" }),
-  kind: text("kind").notNull(), // click | type | key | scroll
-  payload: jsonb("payload").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  consumedAt: timestamp("consumed_at", { withTimezone: true }),
 });
 
 /** Postgres channel used for LISTEN/NOTIFY job-event relay to the web app's SSE stream. */

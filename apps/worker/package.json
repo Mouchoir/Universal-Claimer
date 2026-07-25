@@ -9,14 +9,16 @@
     "start": "node ./dist/index.js"
   },
   "dependencies": {
-    "@uc/core": "workspace:*",
     "@uc/connectors": "workspace:*",
+    "@uc/core": "workspace:*",
     "@uc/db": "workspace:*",
     "@uc/notifications": "workspace:*",
     "drizzle-orm": "^0.36.0",
-    "playwright-core": "^1.48.0"
+    "playwright-core": "^1.48.0",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
