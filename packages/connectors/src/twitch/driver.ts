@@ -57,11 +57,11 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
   }
 
   async isAuthenticated(): Promise<boolean> {
-    const page = await this.page();
-    await page.goto("https://www.twitch.tv/", { waitUntil: "domcontentloaded" });
-    // Logged-in users have an account menu; anonymous users see a Log In button.
-    const loginButtons = await page.getByText("Log In", { exact: true }).count().catch(() => 0);
-    return loginButtons === 0;
+    // Language-independent: Twitch sets an `auth-token` cookie for logged-in sessions. The old
+    // check looked for an English "Log In" button, which is absent on a localized (e.g. French)
+    // UI and made a logged-out session look authenticated.
+    const cookies = await this.context.cookies("https://www.twitch.tv");
+    return cookies.some((c) => c.name === "auth-token" && Boolean(c.value));
   }
 
   async loginWithPassword(
@@ -91,25 +91,34 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
 
     if (await this.detectCaptcha(page)) return { subscribed: false, captcha: true };
 
-    // If already subscribed, Twitch shows "Subscribed" instead of a Subscribe button.
-    const already = await page.getByText(/^Subscribed$/).count().catch(() => 0);
+    // Labels are matched in English + French (the account UI locale). The subscribe button also
+    // carries the stable data-a-target="subscribe-button" attribute, tried first.
+    // If already subscribed, Twitch shows "Subscribed" / "Abonné" instead of a Subscribe button.
+    const already = await page.getByText(/^(Subscribed|Abonné·?e?)$/i).count().catch(() => 0);
     if (already > 0) return { subscribed: false, alreadyActive: true };
 
-    // Open the subscribe dialog, choose Prime, confirm. Best-effort labels.
-    const subBtn = page.getByRole("button", { name: /^(Subscribe|Resubscribe)$/ }).first();
+    // Open the subscribe dialog, choose Prime, confirm. Best-effort (needs live validation on a
+    // connected account — the subscribe UI only renders when logged in).
+    let subBtn = page.locator("button[data-a-target='subscribe-button']").first();
     if ((await subBtn.count().catch(() => 0)) === 0) {
-      return { subscribed: false, alreadyActive: true }; // no subscribe affordance → treat as nothing to do
+      subBtn = page.getByRole("button", { name: /^(Subscribe|Resubscribe|S['’]abonner|Se réabonner)$/i }).first();
+    }
+    if ((await subBtn.count().catch(() => 0)) === 0) {
+      return { subscribed: false, alreadyActive: true }; // no subscribe affordance → nothing to do
     }
     await subBtn.click().catch(() => undefined);
-    await page.getByText(/Use (your )?Prime/i).first().click().catch(() => undefined);
+    await page.getByText(/Use (your )?Prime|Utiliser (votre )?Prime/i).first().click().catch(() => undefined);
     if (await this.detectCaptcha(page)) return { subscribed: false, captcha: true };
     await page
-      .getByRole("button", { name: /Subscribe with Prime/i })
+      .getByRole("button", { name: /Subscribe with Prime|S['’]abonner avec Prime/i })
       .first()
       .click()
       .catch(() => undefined);
 
-    return { subscribed: true };
+    // Verify: after subscribing, Twitch shows a subscribed state. Only report success if seen.
+    await page.waitForTimeout(2500).catch(() => undefined);
+    const nowSubbed = await page.getByText(/^(Subscribed|Abonné·?e?)$/i).count().catch(() => 0);
+    return { subscribed: nowSubbed > 0 };
   }
 
   async getCookies(): Promise<BrowserCookie[]> {
