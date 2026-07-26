@@ -8,6 +8,7 @@ describe("serviceForUrl", () => {
     expect(serviceForUrl("https://store.epicgames.com/p/x")).toBe("epic");
     expect(serviceForUrl("https://rewards.microsoft.com/")).toBe("microsoft");
     expect(serviceForUrl("https://www.bing.com/")).toBe("microsoft");
+    expect(serviceForUrl("https://gaming.amazon.com/home")).toBe("primegaming");
   });
   it("returns null for unknown hosts and garbage", () => {
     expect(serviceForUrl("https://example.com/")).toBeNull();
@@ -46,7 +47,7 @@ describe("dedupeCookies", () => {
 });
 
 describe("SERVICES", () => {
-  it("covers the three connectors", () => {
-    expect(SERVICES.map((s) => s.id).sort()).toEqual(["epic", "microsoft", "twitch"]);
+  it("covers every connector", () => {
+    expect(SERVICES.map((s) => s.id).sort()).toEqual(["epic", "microsoft", "primegaming", "twitch"]);
   });
 });

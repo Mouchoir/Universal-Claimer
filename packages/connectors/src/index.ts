@@ -9,6 +9,8 @@ export { TwitchConnector } from "./twitch/index.js";
 export type { TwitchPageDriver, TwitchDriverFactory } from "./twitch/index.js";
 export { MsRewardsConnector } from "./msrewards/index.js";
 export type { MsRewardsPageDriver, MsRewardsDriverFactory } from "./msrewards/index.js";
+export { PrimeGamingConnector } from "./primegaming/index.js";
+export type { PrimeGamingPageDriver, PrimeGamingDriverFactory, PrimeOffer } from "./primegaming/index.js";
 export { defaultRegistry } from "./all.js";
 
 // NOTE: the CloakBrowser factory (./browser.js) is intentionally NOT re-exported here — it

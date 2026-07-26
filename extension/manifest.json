@@ -9,7 +9,8 @@
     "https://*.epicgames.com/*",
     "https://*.microsoft.com/*",
     "https://*.live.com/*",
-    "https://*.bing.com/*"
+    "https://*.bing.com/*",
+    "https://*.amazon.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
