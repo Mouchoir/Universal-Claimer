@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Universal Claimer — Session Exporter</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 14px/1.4 system-ui, sans-serif; width: 320px; margin: 0; padding: 14px; }
+      h1 { font-size: 15px; margin: 0 0 10px; }
+      label { display: block; font-weight: 600; margin: 10px 0 4px; }
+      select, button { width: 100%; padding: 8px; border-radius: 8px; box-sizing: border-box; }
+      button { margin-top: 8px; cursor: pointer; border: 1px solid currentColor; background: transparent; font-weight: 600; }
+      button.primary { background: #7c5cff; color: #fff; border-color: #7c5cff; }
+      .muted { opacity: 0.7; font-size: 12px; }
+      .status { margin-top: 10px; min-height: 16px; font-size: 13px; }
+      .ok { color: #22c55e; }
+      .err { color: #ef4444; }
+    </style>
+  </head>
+  <body>
+    <h1>🎁 Universal Claimer — Session Exporter</h1>
+    <p class="muted">Runs entirely on your machine. Your cookies are never sent anywhere.</p>
+
+    <label for="service">Service</label>
+    <select id="service"></select>
+
+    <button id="copy" class="primary">Copy cookies.txt</button>
+    <button id="download">Download cookies.txt</button>
+
+    <div id="status" class="status"></div>
+
+    <p class="muted">
+      Paste the copied text into <em>Session import</em> on your Universal Claimer
+      <code>/connect</code> page while logged in to the service.
+    </p>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
