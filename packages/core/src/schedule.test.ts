@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyJitter, computeNextRun, jitterSeconds } from "./schedule.js";
+import { PRIME_SUB_DAYS, applyJitter, computeNextRun, estimateBenefitEnd, jitterSeconds } from "./schedule.js";
 
 describe("computeNextRun (local time)", () => {
   it("daily: later today when the time is still ahead", () => {
@@ -67,5 +67,21 @@ describe("applyJitter", () => {
       const delta = Math.abs(applyJitter(base, 20, () => r).getTime() - base.getTime());
       expect(delta).toBeLessThanOrEqual(20 * 60_000);
     }
+  });
+});
+
+describe("estimateBenefitEnd", () => {
+  it("adds the Prime sub duration by default", () => {
+    const claimed = new Date("2026-07-26T10:00:00.000Z");
+    expect(estimateBenefitEnd(claimed).toISOString()).toBe("2026-08-25T10:00:00.000Z");
+  });
+
+  it("accepts a custom duration", () => {
+    const claimed = new Date("2026-07-26T10:00:00.000Z");
+    expect(estimateBenefitEnd(claimed, 7).toISOString()).toBe("2026-08-02T10:00:00.000Z");
+  });
+
+  it("uses the documented 30-day Prime period", () => {
+    expect(PRIME_SUB_DAYS).toBe(30);
   });
 });

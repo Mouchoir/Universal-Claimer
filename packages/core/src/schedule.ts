@@ -52,3 +52,16 @@ export function applyJitter(
   const offset = Math.round((rand() * 2 - 1) * jitterMinutes);
   return new Date(runAt.getTime() + offset * 60_000);
 }
+
+/** A Twitch Prime subscription lasts 30 days and must be renewed manually. */
+export const PRIME_SUB_DAYS = 30;
+
+/**
+ * Estimate when a benefit we claimed ourselves runs out, from the moment we claimed it. Twitch no
+ * longer exposes a subscription's end date anywhere scrapable (the old /settings/subscriptions page
+ * redirects away), so when the service doesn't tell us, we derive it from our own claim history —
+ * which is exactly what scheduling the renewal needs. Callers must present this as an estimate.
+ */
+export function estimateBenefitEnd(claimedAt: Date, days = PRIME_SUB_DAYS): Date {
+  return new Date(claimedAt.getTime() + days * 86_400_000);
+}
