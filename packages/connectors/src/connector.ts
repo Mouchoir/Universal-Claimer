@@ -42,6 +42,8 @@ export interface ConfigField {
   label: string;
   required: boolean;
   placeholder?: string;
+  /** Optional clarifying text rendered under the field (what the value is, and what it is not). */
+  help?: string;
 }
 
 /** Per-account connector config values (non-secret, plain JSON). */

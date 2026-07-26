@@ -73,11 +73,22 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
     await page.goto("https://www.twitch.tv/login", { waitUntil: "domcontentloaded" });
     await page.fill("#login-username", email).catch(() => undefined);
     await page.fill("#password-input", password).catch(() => undefined);
-    await page.getByRole("button", { name: /log in/i }).click().catch(() => undefined);
+    // Submit via the form's submit button rather than its visible label, which is localized.
+    const submit =
+      (await this.firstPresent(page, [
+        "button[data-a-target='passport-login-button']",
+        "form button[type='submit']",
+      ])) ?? page.getByRole("button", { name: /log ?in/i }).first();
+    await submit.click().catch(() => undefined);
     if (await this.detectCaptcha(page)) return { authenticated: false, captcha: true };
     if (totp) {
       await page.fill("input[autocomplete='one-time-code']", totp).catch(() => undefined);
-      await page.getByRole("button", { name: /submit|verify/i }).click().catch(() => undefined);
+      const verify =
+        (await this.firstPresent(page, [
+          "button[data-a-target='tw-core-button']",
+          "form button[type='submit']",
+        ])) ?? page.getByRole("button", { name: /submit|verify/i }).first();
+      await verify.click().catch(() => undefined);
     }
     return { authenticated: await this.isAuthenticated() };
   }
@@ -91,34 +102,47 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
 
     if (await this.detectCaptcha(page)) return { subscribed: false, captcha: true };
 
-    // Labels are matched in English + French (the account UI locale). The subscribe button also
-    // carries the stable data-a-target="subscribe-button" attribute, tried first.
-    // If already subscribed, Twitch shows "Subscribed" / "Abonné" instead of a Subscribe button.
-    const already = await page.getByText(/^(Subscribed|Abonné·?e?)$/i).count().catch(() => 0);
-    if (already > 0) return { subscribed: false, alreadyActive: true };
+    // Twitch renders its UI in the *account's* language and offers no reliable per-URL locale
+    // override, so this flow keys off `data-a-target` attributes, which Twitch keeps in English
+    // no matter the display language — making it work for users in any locale. Visible-text
+    // matching is kept only as a last-resort fallback.
+    if (await this.isSubscribed(page)) return { subscribed: false, alreadyActive: true };
 
-    // Open the subscribe dialog, choose Prime, confirm. Best-effort (needs live validation on a
-    // connected account — the subscribe UI only renders when logged in).
-    let subBtn = page.locator("button[data-a-target='subscribe-button']").first();
-    if ((await subBtn.count().catch(() => 0)) === 0) {
-      subBtn = page.getByRole("button", { name: /^(Subscribe|Resubscribe|S['’]abonner|Se réabonner)$/i }).first();
-    }
-    if ((await subBtn.count().catch(() => 0)) === 0) {
-      return { subscribed: false, alreadyActive: true }; // no subscribe affordance → nothing to do
+    const subBtn = await this.firstPresent(page, [
+      "button[data-a-target='subscribe-button']",
+      "[data-a-target='subscribe-button']",
+    ]);
+    if (!subBtn) {
+      // No subscribe affordance (not logged in, or channel has no subs) → nothing to do.
+      return { subscribed: false, alreadyActive: true };
     }
     await subBtn.click().catch(() => undefined);
-    await page.getByText(/Use (your )?Prime|Utiliser (votre )?Prime/i).first().click().catch(() => undefined);
-    if (await this.detectCaptcha(page)) return { subscribed: false, captcha: true };
-    await page
-      .getByRole("button", { name: /Subscribe with Prime|S['’]abonner avec Prime/i })
-      .first()
-      .click()
-      .catch(() => undefined);
 
-    // Verify: after subscribing, Twitch shows a subscribed state. Only report success if seen.
-    await page.waitForTimeout(2500).catch(() => undefined);
-    const nowSubbed = await page.getByText(/^(Subscribed|Abonné·?e?)$/i).count().catch(() => 0);
-    return { subscribed: nowSubbed > 0 };
+    // Choose the Prime tier, then confirm. Attribute selectors first, text as fallback.
+    const prime = await this.firstPresent(page, [
+      "[data-a-target='prime-subscribe-button']",
+      "[data-a-target*='prime']",
+    ]);
+    if (prime) await prime.click().catch(() => undefined);
+    else await page.getByText(/Prime/i).first().click().catch(() => undefined);
+
+    if (await this.detectCaptcha(page)) return { subscribed: false, captcha: true };
+
+    const confirm = await this.firstPresent(page, [
+      "[data-a-target='prime-subscribe-confirmation-button']",
+      "[data-a-target='subscribe-with-prime-button']",
+    ]);
+    if (confirm) await confirm.click().catch(() => undefined);
+    else
+      await page
+        .getByRole("button", { name: /Prime/i })
+        .last()
+        .click()
+        .catch(() => undefined);
+
+    // Verify: only report success once Twitch actually shows a subscribed state.
+    await page.waitForTimeout(3000).catch(() => undefined);
+    return { subscribed: await this.isSubscribed(page) };
   }
 
   async getCookies(): Promise<BrowserCookie[]> {
@@ -138,6 +162,29 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
   async goto(url: string): Promise<void> {
     const page = await this.page();
     await page.goto(url, { waitUntil: "domcontentloaded" });
+  }
+
+  /** Return a locator for the first selector present on the page, or null if none match. */
+  private async firstPresent(page: Page, selectors: string[]) {
+    for (const sel of selectors) {
+      const loc = page.locator(sel).first();
+      if ((await loc.count().catch(() => 0)) > 0) return loc;
+    }
+    return null;
+  }
+
+  /**
+   * Is the account currently subscribed to the open channel? Uses Twitch's language-independent
+   * `data-a-target` markers (a subscribed channel exposes the sub-gift / manage affordances and
+   * drops the plain subscribe button) so this works whatever the UI language is.
+   */
+  private async isSubscribed(page: Page): Promise<boolean> {
+    const subscribedMarker = await this.firstPresent(page, [
+      "[data-a-target='subscribed-button']",
+      "[data-a-target='manage-subscription-button']",
+      "[data-a-target='subscription-gift-button']",
+    ]);
+    return subscribedMarker !== null;
   }
 
   private async detectCaptcha(page: Page): Promise<boolean> {
