@@ -111,11 +111,26 @@ export function ClaimPanel() {
                   )}
                   <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
                     {a.method} — {a.status}
-                    {a.config?.channel && <> · channel: {a.config.channel}</>}
                   </div>
                 </div>
-                <button onClick={() => runClaim(a.id)}>Run claim</button>
+                {a.status === "needs_reauth" ? (
+                  <a href={`/connect/${a.serviceId}`}>
+                    <button>Reconnect</button>
+                  </a>
+                ) : (
+                  <button onClick={() => runClaim(a.id)}>Run claim</button>
+                )}
               </div>
+
+              {/* Explain the dead session and what to do, instead of just a status word. */}
+              {a.status === "needs_reauth" && (
+                <p className="uc-warning" style={{ fontSize: 13, marginTop: 8 }}>
+                  This session expired, so claims can&apos;t run. Services keep browser sessions
+                  alive only for a while (Epic&apos;s login tokens last about two days), so it needs
+                  reconnecting. Use <strong>Reconnect</strong> — the fastest way is the session
+                  exporter extension.
+                </p>
+              )}
 
               {/* Active benefits (e.g. a Twitch Prime sub and when it runs out). */}
               {a.facts?.entitlements?.map((e, i) => {

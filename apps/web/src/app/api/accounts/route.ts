@@ -13,6 +13,7 @@ import {
   hasConsent,
   listAccounts,
   listClaimEvents,
+  replaceAccountSecret,
   type ConnectionMethod,
   type Entitlement,
 } from "@uc/db";
@@ -96,9 +97,10 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!(await hasConsent(db, service.id))) {
     return jsonError("CONSENT_REQUIRED", "You must consent before connecting.", 400);
   }
-  if (await getAccountByService(db, service.id)) {
-    return jsonError("ACCOUNT_EXISTS", "This service already has a connected account.", 409);
-  }
+  // An existing account for this service is replaced rather than rejected: reaching this page for
+  // a connected service means "reconnect it" (typically after the session expired). The account
+  // id, claim history and schedule are preserved.
+  const existing = await getAccountByService(db, service.id);
 
   const configFields = defaultRegistry().get(service.id)?.configFields;
   const missing = missingConfigKeys(configFields, input.config);
@@ -141,8 +143,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   const sealed = sealSecret(payload, getMasterKey());
-  const account = await createAccount(db, {
-    serviceId: service.id,
+  const values = {
     method: input.method as ConnectionMethod,
     secretCiphertext: sealed.ciphertext,
     secretDataKey: sealed.wrappedDataKey,
@@ -150,7 +151,13 @@ export async function POST(req: Request): Promise<NextResponse> {
     config: input.config ?? {},
     proxyCiphertext: proxySeal?.ciphertext ?? null,
     proxyDataKey: proxySeal?.wrappedDataKey ?? null,
-  });
+  };
 
+  if (existing) {
+    await replaceAccountSecret(db, existing.id, values);
+    return NextResponse.json({ accountId: existing.id, status: "connected", reconnected: true });
+  }
+
+  const account = await createAccount(db, { serviceId: service.id, ...values });
   return NextResponse.json({ accountId: account.id, status: account.status }, { status: 201 });
 }

@@ -29,6 +29,62 @@ export interface TwitchPageDriver {
 
 export type TwitchDriverFactory = (session: SessionHandle) => TwitchPageDriver;
 
+/** One subscription as reported by Twitch's GraphQL API. `channel` is the owner login, lowercased. */
+export interface SubscriptionInfo {
+  channel: string;
+  /** ISO end date, when Twitch reports one (a permanent grant has none). */
+  endsAt?: string;
+  purchasedWithPrime: boolean;
+}
+
+/**
+ * Parse Twitch's `SubscriptionsManager_User` GraphQL response into the subscriptions we care
+ * about. Pure + unit-tested; the driver only supplies the raw response body. Tolerates a missing
+ * or malformed payload by returning an empty list rather than throwing into a claim.
+ */
+export function parseSubscriptionBenefits(raw: string): SubscriptionInfo[] {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  // The endpoint answers with a batch (an array of operation results).
+  const first = Array.isArray(payload) ? payload[0] : payload;
+  const edges =
+    (
+      first as {
+        data?: {
+          currentUser?: {
+            subscriptionBenefits?: {
+              edges?: {
+                node?: {
+                  endsAt?: string | null;
+                  purchasedWithPrime?: boolean | null;
+                  product?: { owner?: { login?: string | null } | null } | null;
+                };
+              }[];
+            } | null;
+          } | null;
+        };
+      }
+    )?.data?.currentUser?.subscriptionBenefits?.edges ?? [];
+
+  const out: SubscriptionInfo[] = [];
+  for (const edge of edges) {
+    const node = edge?.node;
+    const channel = node?.product?.owner?.login?.trim().toLowerCase();
+    if (!channel) continue;
+    const endsAt = node?.endsAt ? new Date(node.endsAt).toISOString() : undefined;
+    out.push({
+      channel,
+      ...(endsAt ? { endsAt } : {}),
+      purchasedWithPrime: Boolean(node?.purchasedWithPrime),
+    });
+  }
+  return out;
+}
+
 /**
  * Real Playwright-backed Twitch driver. Selectors target the current Twitch UI and are
  * best-effort (platform UI changes are the dominant cause of breakage; the connector health
@@ -161,34 +217,61 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
   }
 
   /**
-   * Read when the active Prime sub to `channel` ends, from the subscriptions page. Best-effort
-   * and locale-sensitive in its date formatting, so it returns undefined rather than guessing
-   * when the value can't be parsed — the dashboard then just omits the end date.
+   * Read the account's subscriptions — including each one's exact end date — from Twitch's own
+   * GraphQL endpoint, the same one the site itself calls, using the operator's session. Scraping
+   * was not viable: Twitch's old /settings/subscriptions page redirects away and the remaining UI
+   * exposes no machine-readable date. This is also fully language-independent.
    */
-  async getPrimeSubEnd(channel: string): Promise<string | undefined> {
+  private async fetchSubscriptions(): Promise<SubscriptionInfo[]> {
     const page = await this.page();
     try {
-      await page.goto("https://www.twitch.tv/subscriptions", { waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(2500).catch(() => undefined);
-      const iso = await page.evaluate((ch: string) => {
-        const wanted = ch.toLowerCase();
-        // Find the card mentioning the channel, then any machine-readable date inside it.
-        const cards = Array.from(document.querySelectorAll("[data-a-target], article, li, div"));
-        for (const card of cards) {
-          const text = (card.textContent ?? "").toLowerCase();
-          if (!text.includes(wanted)) continue;
-          const time = card.querySelector("time[datetime]");
-          const dt = time?.getAttribute("datetime");
-          if (dt) return dt;
-        }
-        return null;
-      }, channel);
-      if (!iso) return undefined;
-      const parsed = Date.parse(iso);
-      return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+      // The request must run from a twitch.tv origin so it carries the site's own context.
+      if (!page.url().includes("twitch.tv")) {
+        await page.goto("https://www.twitch.tv/", { waitUntil: "domcontentloaded" });
+      }
+      const cookies = await this.context.cookies("https://www.twitch.tv");
+      const token = cookies.find((c) => c.name === "auth-token")?.value ?? "";
+      const raw = await page.evaluate(async (tok: string) => {
+        const res = await fetch("https://gql.twitch.tv/gql", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            // Public web client id, as sent by the site itself.
+            "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+            Authorization: tok ? `OAuth ${tok}` : "",
+          },
+          body: JSON.stringify([
+            {
+              operationName: "SubscriptionsManager_User",
+              variables: {},
+              query: `query SubscriptionsManager_User {
+                currentUser {
+                  login
+                  subscriptionBenefits(first: 100, criteria: { filter: ALL, platform: WEB }) {
+                    edges { node { endsAt renewsAt purchasedWithPrime product { owner { login } } } }
+                  }
+                }
+              }`,
+            },
+          ]),
+        });
+        return res.ok ? await res.text() : null;
+      }, token);
+      return raw ? parseSubscriptionBenefits(raw) : [];
     } catch {
-      return undefined;
+      return [];
     }
+  }
+
+  /** When the active Prime sub to `channel` ends (ISO), if Twitch reports one. */
+  async getPrimeSubEnd(channel: string): Promise<string | undefined> {
+    const wanted = channel.trim().toLowerCase();
+    const subs = await this.fetchSubscriptions();
+    // Prefer the Prime-purchased entry for this channel; fall back to any sub to it.
+    const match =
+      subs.find((s) => s.channel === wanted && s.purchasedWithPrime) ??
+      subs.find((s) => s.channel === wanted);
+    return match?.endsAt;
   }
 
   async getCookies(): Promise<BrowserCookie[]> {
