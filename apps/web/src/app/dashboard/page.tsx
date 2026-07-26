@@ -13,12 +13,17 @@ export default async function DashboardPage() {
   const { db } = getDb();
   const services = await listServices(db);
   const rows = await Promise.all(
-    services.map(async (s) => ({
-      ...s,
-      connected: (await getAccountByService(db, s.id)) !== null,
-      consented: await hasConsent(db, s.id),
-      disabled: await isConnectorDisabled(db, s.id),
-    })),
+    services.map(async (s) => {
+      const account = await getAccountByService(db, s.id);
+      return {
+        ...s,
+        connected: account !== null,
+        // A connected account whose session expired must not read as healthy.
+        needsReauth: account?.status === "needs_reauth",
+        consented: await hasConsent(db, s.id),
+        disabled: await isConnectorDisabled(db, s.id),
+      };
+    }),
   );
 
   return (
@@ -37,13 +42,19 @@ export default async function DashboardPage() {
               <div>
                 <strong>{s.displayName}</strong>
                 <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
-                  {s.connected ? "Connected" : "Not connected"}
+                  {s.needsReauth
+                    ? "Session expired — needs reconnecting"
+                    : s.connected
+                      ? "Connected"
+                      : "Not connected"}
                   {s.disabled && (
                     <span className="uc-warning"> · connector auto-disabled (repeated failures)</span>
                   )}
                 </div>
               </div>
-              {s.connected ? (
+              {s.needsReauth ? (
+                <Link href={`/connect/${s.id}`}>Reconnect</Link>
+              ) : s.connected ? (
                 <span style={{ color: "var(--uc-success)" }}>✓</span>
               ) : (
                 <Link href={`/connect/${s.id}`}>Connect</Link>

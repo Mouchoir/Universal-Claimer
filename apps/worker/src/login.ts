@@ -10,6 +10,8 @@ import {
 } from "@uc/connectors";
 import {
   createAccount,
+  getAccountByService,
+  replaceAccountSecret,
   getLoginSession,
   setLoginStatus,
   type Database,
@@ -88,16 +90,21 @@ export function makeLoginDeps(args: {
       const cookies = await connector.extractCookies(session as SessionHandle);
       const sealed = sealSecret(JSON.stringify({ cookies }), masterKey);
       const loginSession = await getLoginSession(db, job.sessionId);
-      await createAccount(db, {
-        serviceId: job.serviceId,
-        method: "session_import",
+      const values = {
+        method: "session_import" as const,
         secretCiphertext: sealed.ciphertext,
         secretDataKey: sealed.wrappedDataKey,
         fingerprint: defaultFingerprint(),
         config: loginSession?.config ?? {},
         proxyCiphertext: loginSession?.proxyCiphertext ?? null,
         proxyDataKey: loginSession?.proxyDataKey ?? null,
-      });
+      };
+      // Assisted login is also the reconnect path for an expired session: replace the stored
+      // secret on the existing account (keeping its id, history and schedule) rather than
+      // failing on the one-account-per-service constraint.
+      const existing = await getAccountByService(db, job.serviceId);
+      if (existing) await replaceAccountSecret(db, existing.id, values);
+      else await createAccount(db, { serviceId: job.serviceId, ...values });
     },
     setStatus: async (sessionId, status) => setLoginStatus(db, sessionId, status),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

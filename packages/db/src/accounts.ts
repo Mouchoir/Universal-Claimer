@@ -160,6 +160,40 @@ export async function createAccount(db: Database, input: NewAccount): Promise<Ac
   return toPublic(row!);
 }
 
+/**
+ * Replace a connected account's stored secret (and optionally its config/proxy) — this is what
+ * "reconnect" does when a service's session has expired. The account id, history and schedule are
+ * kept; the status returns to `connected`.
+ */
+export async function replaceAccountSecret(
+  db: Database,
+  id: string,
+  input: {
+    method: ConnectionMethod;
+    secretCiphertext: Buffer;
+    secretDataKey: Buffer;
+    fingerprint: unknown;
+    config?: Record<string, string>;
+    proxyCiphertext?: Buffer | null;
+    proxyDataKey?: Buffer | null;
+  },
+): Promise<void> {
+  await db
+    .update(connectedAccount)
+    .set({
+      method: input.method,
+      secretCiphertext: input.secretCiphertext,
+      secretDataKey: input.secretDataKey,
+      fingerprint: input.fingerprint,
+      ...(input.config ? { config: input.config } : {}),
+      proxyCiphertext: input.proxyCiphertext ?? null,
+      proxyDataKey: input.proxyDataKey ?? null,
+      status: "connected",
+      updatedAt: new Date(),
+    })
+    .where(eq(connectedAccount.id, id));
+}
+
 export async function updateAccountStatus(
   db: Database,
   id: string,
