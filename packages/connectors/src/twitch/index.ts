@@ -28,6 +28,8 @@ export class TwitchConnector implements Connector, InteractiveLogin {
   readonly version = "0.1.0";
   readonly methods: ConnectionMethod[] = ["session_import", "credential_totp"];
   readonly loginUrl = "https://www.twitch.tv/login";
+  // A Prime sub lasts until a known date; renewing it on a daily/weekly slot makes no sense.
+  readonly schedulingMode = "on_expiry" as const;
   readonly configFields: ConfigField[] = [
     {
       key: "channel",

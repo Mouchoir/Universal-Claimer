@@ -65,6 +65,7 @@ export async function GET(): Promise<NextResponse> {
           method: a.method,
           status: a.status,
           displayName: a.displayName,
+          schedulingMode: defaultRegistry().get(a.serviceId)?.schedulingMode ?? "recurring",
           config: a.config,
           facts: { ...a.facts, entitlements: withEstimatedEnd(a.facts.entitlements, claims) },
           factsUpdatedAt: a.factsUpdatedAt,

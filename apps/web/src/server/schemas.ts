@@ -41,13 +41,13 @@ export const sseJobsEventSchema = z.object({
 /** Set/replace a recurring schedule for an account (feature 002). */
 export const scheduleSchema = z
   .object({
-    frequency: z.enum(["daily", "weekly"]),
-    hour: z.number().int().min(0).max(23),
-    minute: z.number().int().min(0).max(59),
+    frequency: z.enum(["daily", "weekly", "on_expiry"]),
+    hour: z.number().int().min(0).max(23).default(0),
+    minute: z.number().int().min(0).max(59).default(0),
     dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
     enabled: z.boolean(),
-    // Randomize each run by ± this many minutes (anti-detection). Capped at 3h.
-    jitterMinutes: z.number().int().min(0).max(180).optional(),
+    // Randomize each run by ± this many minutes (anti-detection). Up to a full day.
+    jitterMinutes: z.number().int().min(0).max(1440).optional(),
   })
   .refine((d) => d.frequency !== "weekly" || d.dayOfWeek != null, {
     message: "weekly schedule requires a dayOfWeek (0-6)",

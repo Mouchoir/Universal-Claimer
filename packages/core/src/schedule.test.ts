@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PRIME_SUB_DAYS, applyJitter, computeNextRun, estimateBenefitEnd, jitterSeconds } from "./schedule.js";
+import { PRIME_SUB_DAYS, applyJitter, computeNextRun, estimateBenefitEnd, jitterSeconds, nextRunAfterExpiry } from "./schedule.js";
 
 describe("computeNextRun (local time)", () => {
   it("daily: later today when the time is still ahead", () => {
@@ -83,5 +83,30 @@ describe("estimateBenefitEnd", () => {
 
   it("uses the documented 30-day Prime period", () => {
     expect(PRIME_SUB_DAYS).toBe(30);
+  });
+});
+
+describe("nextRunAfterExpiry", () => {
+  const ends = new Date("2026-08-16T21:13:40.000Z");
+
+  it("runs exactly at expiry with no randomization", () => {
+    expect(nextRunAfterExpiry(ends, 0).getTime()).toBe(ends.getTime());
+  });
+
+  it("never schedules before the benefit expires", () => {
+    for (const r of [0, 0.25, 0.5, 0.99]) {
+      expect(nextRunAfterExpiry(ends, 600, () => r).getTime()).toBeGreaterThanOrEqual(ends.getTime());
+    }
+  });
+
+  it("stays inside the randomization window", () => {
+    const max = ends.getTime() + 600 * 60_000;
+    expect(nextRunAfterExpiry(ends, 600, () => 0.999999).getTime()).toBeLessThanOrEqual(max);
+  });
+
+  it("spreads runs across the window", () => {
+    const a = nextRunAfterExpiry(ends, 600, () => 0.1).getTime();
+    const b = nextRunAfterExpiry(ends, 600, () => 0.9).getTime();
+    expect(b).toBeGreaterThan(a);
   });
 });

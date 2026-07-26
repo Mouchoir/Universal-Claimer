@@ -2,7 +2,7 @@ import { and, eq, lte } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { schedule } from "./schema.js";
 
-export type Frequency = "daily" | "weekly";
+export type Frequency = "daily" | "weekly" | "on_expiry";
 
 export interface ScheduleInput {
   frequency: Frequency;
