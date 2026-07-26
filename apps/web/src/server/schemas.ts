@@ -46,6 +46,8 @@ export const scheduleSchema = z
     minute: z.number().int().min(0).max(59),
     dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
     enabled: z.boolean(),
+    // Randomize each run by ± this many minutes (anti-detection). Capped at 3h.
+    jitterMinutes: z.number().int().min(0).max(180).optional(),
   })
   .refine((d) => d.frequency !== "weekly" || d.dayOfWeek != null, {
     message: "weekly schedule requires a dayOfWeek (0-6)",

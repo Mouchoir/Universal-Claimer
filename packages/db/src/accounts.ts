@@ -5,6 +5,18 @@ import { connectedAccount, consentRecord } from "./schema.js";
 export type ConnectionMethod = "session_import" | "credential_totp";
 export type AccountStatus = "connected" | "needs_reauth";
 
+/** An active benefit observed on the account (mirrors the connectors' Entitlement). */
+export interface Entitlement {
+  kind: "prime_sub";
+  channel?: string;
+  endsAt?: string;
+}
+
+/** Non-secret facts observed during runs and surfaced in the dashboard. */
+export interface AccountFacts {
+  entitlements?: Entitlement[];
+}
+
 /** Public account view — never includes secret material (FR-008). */
 export interface AccountRow {
   id: string;
@@ -12,6 +24,11 @@ export interface AccountRow {
   method: ConnectionMethod;
   status: AccountStatus;
   fingerprint: unknown;
+  /** The account's username on the service, when the connector has reported it. */
+  displayName: string | null;
+  facts: AccountFacts;
+  factsUpdatedAt: Date | null;
+  config: Record<string, string>;
 }
 
 export interface NewAccount {
@@ -45,7 +62,38 @@ function toPublic(row: typeof connectedAccount.$inferSelect): AccountRow {
     method: row.method as ConnectionMethod,
     status: row.status as AccountStatus,
     fingerprint: row.fingerprint,
+    displayName: row.displayName ?? null,
+    facts: (row.facts as AccountFacts) ?? {},
+    factsUpdatedAt: row.factsUpdatedAt ?? null,
+    config: (row.config as Record<string, string>) ?? {},
   };
+}
+
+/**
+ * Persist the non-secret facts a connector observed during a run (username, entitlements).
+ * Merged over the existing facts so a connector that only learns part of them doesn't wipe
+ * the rest.
+ */
+export async function updateAccountFacts(
+  db: Database,
+  id: string,
+  input: { displayName?: string; facts?: AccountFacts },
+): Promise<void> {
+  const [existing] = await db
+    .select({ displayName: connectedAccount.displayName, facts: connectedAccount.facts })
+    .from(connectedAccount)
+    .where(eq(connectedAccount.id, id))
+    .limit(1);
+  if (!existing) return;
+  await db
+    .update(connectedAccount)
+    .set({
+      displayName: input.displayName ?? existing.displayName,
+      facts: { ...((existing.facts as AccountFacts) ?? {}), ...(input.facts ?? {}) },
+      factsUpdatedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(connectedAccount.id, id));
 }
 
 export async function getAccountByService(

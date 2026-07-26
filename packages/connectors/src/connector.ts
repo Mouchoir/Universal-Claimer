@@ -56,10 +56,44 @@ export type ClaimOutcome =
   | "reauth_needed"
   | "requires_human_action";
 
+/** What a claim actually obtained — one entry per item, recorded for history and stats. */
+export interface ClaimedItem {
+  /** `game` for a store title, `prime_sub` for a Twitch Prime subscription, `points` for MS Rewards. */
+  kind: "game" | "prime_sub" | "points";
+  /** Display title (game name, channel name, …). Never a secret. */
+  title: string;
+}
+
+/**
+ * A currently-active benefit on the account worth surfacing in the dashboard — notably a Twitch
+ * Prime subscription, whose end date is a natural default for the next automatic run.
+ */
+export interface Entitlement {
+  kind: "prime_sub";
+  /** Channel the subscription applies to. */
+  channel?: string;
+  /** When it expires/renews, ISO 8601. */
+  endsAt?: string;
+}
+
+/**
+ * Non-secret facts about a connected account, reported opportunistically by a connector during a
+ * run (the session is already open, so this costs nothing extra).
+ */
+export interface AccountFacts {
+  /** The account's own username on the service (e.g. the Twitch/Epic display name). */
+  username?: string;
+  entitlements?: Entitlement[];
+}
+
 export interface ClaimResult {
   outcome: ClaimOutcome;
   /** Human-readable, secret-free summary. */
   summary: string;
+  /** Structured record of what was obtained, for the claim history and stats. */
+  claimedItems?: ClaimedItem[];
+  /** Account facts observed during this run (username, active entitlements). */
+  accountFacts?: AccountFacts;
 }
 
 export interface HealthResult {

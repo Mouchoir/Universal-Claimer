@@ -4,14 +4,23 @@ import { useEffect, useState } from "react";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export function ScheduleEditor({ accountId }: { accountId: string }) {
+export function ScheduleEditor({
+  accountId,
+  suggestedNextRun,
+}: {
+  accountId: string;
+  /** End of an active entitlement (e.g. a Prime sub) — the natural time to renew it. */
+  suggestedNextRun?: string;
+}) {
   const [enabled, setEnabled] = useState(false);
   const [frequency, setFrequency] = useState<"daily" | "weekly">("daily");
   const [dayOfWeek, setDayOfWeek] = useState(1);
   const [hour, setHour] = useState(9);
   const [minute, setMinute] = useState(0);
+  const [jitterMinutes, setJitterMinutes] = useState(0);
   const [nextRunAt, setNextRunAt] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [hasSchedule, setHasSchedule] = useState(false);
 
   useEffect(() => {
     fetch(`/api/accounts/${accountId}/schedule`)
@@ -19,15 +28,32 @@ export function ScheduleEditor({ accountId }: { accountId: string }) {
       .then((d) => {
         const s = d.schedule;
         if (!s) return;
+        setHasSchedule(true);
         setEnabled(s.enabled);
         setFrequency(s.frequency);
         setDayOfWeek(s.dayOfWeek ?? 1);
         setHour(s.hour);
         setMinute(s.minute);
+        setJitterMinutes(s.jitterMinutes ?? 0);
         setNextRunAt(s.nextRunAt ?? null);
       })
       .catch(() => undefined);
   }, [accountId]);
+
+  /**
+   * Seed the schedule from an active entitlement's end date, so the renewal fires when the
+   * current benefit actually runs out. Only applied when the operator hasn't set one yet.
+   */
+  useEffect(() => {
+    if (hasSchedule || !suggestedNextRun) return;
+    const t = Date.parse(suggestedNextRun);
+    if (!Number.isFinite(t)) return;
+    const d = new Date(t);
+    setFrequency("weekly");
+    setDayOfWeek(d.getDay());
+    setHour(d.getHours());
+    setMinute(d.getMinutes());
+  }, [hasSchedule, suggestedNextRun]);
 
   async function save() {
     setMsg(null);
@@ -37,6 +63,7 @@ export function ScheduleEditor({ accountId }: { accountId: string }) {
       minute,
       dayOfWeek: frequency === "weekly" ? dayOfWeek : null,
       enabled,
+      jitterMinutes,
     };
     const res = await fetch(`/api/accounts/${accountId}/schedule`, {
       method: "PUT",
@@ -96,6 +123,33 @@ export function ScheduleEditor({ accountId }: { accountId: string }) {
           />
           <span style={{ color: "var(--uc-text-muted)" }}>({pad(hour)}:{pad(minute)} local)</span>
         </div>
+      )}
+
+      {enabled && (
+        <>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span>Randomize by ±</span>
+            <input
+              type="number"
+              min={0}
+              max={180}
+              value={jitterMinutes}
+              onChange={(e) => setJitterMinutes(Number(e.target.value))}
+              style={{ width: 70 }}
+            />
+            <span>minutes</span>
+          </label>
+          <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>
+            Runs at a slightly different time each day so the automation doesn&apos;t fire at an
+            identical hour — which is an obvious pattern to the services. 0 disables it.
+          </span>
+          {suggestedNextRun && !hasSchedule && (
+            <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>
+              Pre-filled from your current benefit, which ends{" "}
+              {new Date(suggestedNextRun).toLocaleDateString()}.
+            </span>
+          )}
+        </>
       )}
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
