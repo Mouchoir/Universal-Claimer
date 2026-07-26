@@ -127,19 +127,29 @@ export class EpicConnector implements Connector, InteractiveLogin {
         else if (!res.alreadyOwned) failed.push(game.title); // neither claimed nor already owned
       }
 
+      // The session is already open, so reporting the account's name here is free.
+      const accountFacts = { username: await driver.getUsername() };
+
       if (claimed.length > 0) {
         const suffix = failed.length ? `; could not complete: ${failed.join(", ")}` : "";
-        return { outcome: "claimed", summary: `Claimed: ${claimed.join(", ")}${suffix}` };
+        return {
+          outcome: "claimed",
+          summary: `Claimed: ${claimed.join(", ")}${suffix}`,
+          claimedItems: claimed.map((title) => ({ kind: "game" as const, title })),
+          accountFacts,
+        };
       }
       if (failed.length > 0) {
         return {
           outcome: "failed",
           summary: `Found free game(s) but could not complete checkout for: ${failed.join(", ")}.`,
+          accountFacts,
         };
       }
       return {
         outcome: "nothing_to_claim",
         summary: `Nothing new to claim (${games.length} free game(s) already owned).`,
+        accountFacts,
       };
     } finally {
       await ctx.browser.close(session);

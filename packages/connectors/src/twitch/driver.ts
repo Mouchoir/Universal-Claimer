@@ -19,6 +19,10 @@ export interface TwitchPageDriver {
   ): Promise<{ authenticated: boolean; captcha?: boolean }>;
   /** Resubscribe to a channel using Twitch Prime. */
   resubWithPrime(channel: string): Promise<ResubResult>;
+  /** The account's own Twitch username, if readable. */
+  getUsername(): Promise<string | undefined>;
+  /** When the active Prime sub to `channel` ends (ISO), if one is active and readable. */
+  getPrimeSubEnd(channel: string): Promise<string | undefined>;
   getCookies(): Promise<BrowserCookie[]>;
   goto(url: string): Promise<void>;
 }
@@ -143,6 +147,48 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
     // Verify: only report success once Twitch actually shows a subscribed state.
     await page.waitForTimeout(3000).catch(() => undefined);
     return { subscribed: await this.isSubscribed(page) };
+  }
+
+  /**
+   * Twitch stores the signed-in username in a plain `login` cookie — language-independent and
+   * free to read (no page load), so it works whatever the account's UI language is.
+   */
+  async getUsername(): Promise<string | undefined> {
+    const cookies = await this.context.cookies("https://www.twitch.tv");
+    const login = cookies.find((c) => c.name === "login" || c.name === "name");
+    const value = login?.value ? decodeURIComponent(login.value).trim() : "";
+    return value.length > 0 ? value : undefined;
+  }
+
+  /**
+   * Read when the active Prime sub to `channel` ends, from the subscriptions page. Best-effort
+   * and locale-sensitive in its date formatting, so it returns undefined rather than guessing
+   * when the value can't be parsed — the dashboard then just omits the end date.
+   */
+  async getPrimeSubEnd(channel: string): Promise<string | undefined> {
+    const page = await this.page();
+    try {
+      await page.goto("https://www.twitch.tv/subscriptions", { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(2500).catch(() => undefined);
+      const iso = await page.evaluate((ch: string) => {
+        const wanted = ch.toLowerCase();
+        // Find the card mentioning the channel, then any machine-readable date inside it.
+        const cards = Array.from(document.querySelectorAll("[data-a-target], article, li, div"));
+        for (const card of cards) {
+          const text = (card.textContent ?? "").toLowerCase();
+          if (!text.includes(wanted)) continue;
+          const time = card.querySelector("time[datetime]");
+          const dt = time?.getAttribute("datetime");
+          if (dt) return dt;
+        }
+        return null;
+      }, channel);
+      if (!iso) return undefined;
+      const parsed = Date.parse(iso);
+      return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async getCookies(): Promise<BrowserCookie[]> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, jitterSeconds } from "./schedule.js";
+import { applyJitter, computeNextRun, jitterSeconds } from "./schedule.js";
 
 describe("computeNextRun (local time)", () => {
   it("daily: later today when the time is still ahead", () => {
@@ -37,5 +37,35 @@ describe("jitterSeconds", () => {
     expect(jitterSeconds(45, () => 0)).toBe(0);
     expect(jitterSeconds(45, () => 0.999999)).toBe(45);
     expect(jitterSeconds(45, () => 0.5)).toBe(23);
+  });
+});
+
+describe("applyJitter", () => {
+  const base = new Date("2026-07-25T09:00:00.000Z");
+
+  it("returns the time unchanged when jitter is zero or negative", () => {
+    expect(applyJitter(base, 0).getTime()).toBe(base.getTime());
+    expect(applyJitter(base, -5).getTime()).toBe(base.getTime());
+  });
+
+  it("shifts earlier at the low end of the RNG range", () => {
+    // rand()=0 → offset = -jitter
+    expect(applyJitter(base, 30, () => 0).getTime()).toBe(base.getTime() - 30 * 60_000);
+  });
+
+  it("shifts later at the high end of the RNG range", () => {
+    // rand()→1 → offset = +jitter
+    expect(applyJitter(base, 30, () => 0.999999).getTime()).toBe(base.getTime() + 30 * 60_000);
+  });
+
+  it("leaves the time unchanged at the midpoint", () => {
+    expect(applyJitter(base, 30, () => 0.5).getTime()).toBe(base.getTime());
+  });
+
+  it("always stays within the requested window", () => {
+    for (const r of [0, 0.13, 0.42, 0.77, 0.99]) {
+      const delta = Math.abs(applyJitter(base, 20, () => r).getTime() - base.getTime());
+      expect(delta).toBeLessThanOrEqual(20 * 60_000);
+    }
   });
 });

@@ -35,3 +35,20 @@ export function computeNextRun(
 export function jitterSeconds(maxSeconds = 45, rand: () => number = Math.random): number {
   return Math.floor(rand() * (maxSeconds + 1));
 }
+
+/**
+ * Shift a scheduled run by a random offset within ±`jitterMinutes`, so automatic claims don't
+ * land on a machine-perfect time every day — an obvious automation signal to the services
+ * (Constitution Principle VII). Whole-minute resolution; 0 or less returns the time unchanged.
+ * Injectable RNG for deterministic tests.
+ */
+export function applyJitter(
+  runAt: Date,
+  jitterMinutes: number,
+  rand: () => number = Math.random,
+): Date {
+  if (!Number.isFinite(jitterMinutes) || jitterMinutes <= 0) return runAt;
+  // rand() in [0,1) → offset in [-jitter, +jitter] minutes.
+  const offset = Math.round((rand() * 2 - 1) * jitterMinutes);
+  return new Date(runAt.getTime() + offset * 60_000);
+}

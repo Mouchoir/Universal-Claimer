@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { computeNextRun } from "@uc/core";
+import { applyJitter, computeNextRun } from "@uc/core";
 import { deleteSchedule, getAccount, getSchedule, upsertSchedule } from "@uc/db";
 import { getDb } from "@/server/context";
 import { jsonError } from "@/server/http";
@@ -33,8 +33,13 @@ export async function PUT(
   }
 
   const d = parsed.data;
+  // Apply the account's randomization window to the first run too, so even the initial
+  // automatic claim doesn't land on an exact, machine-looking time.
   const nextRunAt = d.enabled
-    ? computeNextRun(d.frequency, d.hour, d.minute, d.dayOfWeek ?? null, new Date())
+    ? applyJitter(
+        computeNextRun(d.frequency, d.hour, d.minute, d.dayOfWeek ?? null, new Date()),
+        d.jitterMinutes ?? 0,
+      )
     : null;
   await upsertSchedule(db, params.id, {
     frequency: d.frequency,
@@ -42,6 +47,7 @@ export async function PUT(
     minute: d.minute,
     dayOfWeek: d.dayOfWeek ?? null,
     enabled: d.enabled,
+    jitterMinutes: d.jitterMinutes ?? 0,
     nextRunAt,
   });
   return NextResponse.json({ ok: true, nextRunAt });

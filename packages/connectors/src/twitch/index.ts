@@ -112,13 +112,43 @@ export class TwitchConnector implements Connector, InteractiveLogin {
       if (res.notFound) {
         return { outcome: "failed", summary: `Twitch channel "${channel}" was not found.` };
       }
+
+      // The session is open, so report the account's name and the current Prime sub for free —
+      // the dashboard shows them, and the sub's end date seeds the next automatic run.
+      const accountFacts = {
+        username: await driver.getUsername(),
+        entitlements:
+          res.alreadyActive || res.subscribed
+            ? [
+                {
+                  kind: "prime_sub" as const,
+                  channel,
+                  endsAt: await driver.getPrimeSubEnd(channel),
+                },
+              ]
+            : [],
+      };
+
       if (res.alreadyActive) {
-        return { outcome: "nothing_to_claim", summary: `Prime sub to "${channel}" is already active.` };
+        return {
+          outcome: "nothing_to_claim",
+          summary: `Prime sub to "${channel}" is already active.`,
+          accountFacts,
+        };
       }
       if (res.subscribed) {
-        return { outcome: "claimed", summary: `Resubscribed to "${channel}" with Prime.` };
+        return {
+          outcome: "claimed",
+          summary: `Resubscribed to "${channel}" with Prime.`,
+          claimedItems: [{ kind: "prime_sub" as const, title: channel }],
+          accountFacts,
+        };
       }
-      return { outcome: "nothing_to_claim", summary: `Nothing to do for "${channel}".` };
+      return {
+        outcome: "nothing_to_claim",
+        summary: `Nothing to do for "${channel}".`,
+        accountFacts,
+      };
     } finally {
       await ctx.browser.close(session);
     }

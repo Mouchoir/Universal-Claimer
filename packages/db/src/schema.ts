@@ -63,6 +63,12 @@ export const connectedAccount = pgTable(
     fingerprint: jsonb("fingerprint").notNull(),
     // Non-secret per-account connector config (e.g. { channel } for Twitch). Plain JSON.
     config: jsonb("config").notNull().default({}),
+    // The account's own username on the service, observed during runs (e.g. "EmptyProfile").
+    displayName: text("display_name"),
+    // Non-secret facts observed during runs: { entitlements: [{ kind, channel, endsAt }] }.
+    // Surfaced in the dashboard (e.g. an active Prime sub and when it ends).
+    facts: jsonb("facts").notNull().default({}),
+    factsUpdatedAt: timestamp("facts_updated_at", { withTimezone: true }),
     // Optional per-account proxy URL, envelope-encrypted (may embed credentials).
     proxyCiphertext: bytea("proxy_ciphertext"),
     proxyDataKey: bytea("proxy_data_key"),
@@ -148,6 +154,12 @@ export const schedule = pgTable(
     minute: smallint("minute").notNull(), // 0..59
     dayOfWeek: smallint("day_of_week"), // 0..6 (Sun..Sat); null for daily
     enabled: boolean("enabled").notNull().default(true),
+    /**
+     * Randomize each run's time by up to ±N minutes so automatic claims don't fire at a
+     * machine-perfect hour every day, which is an obvious automation signal to the services
+     * (Constitution Principle VII). 0 disables randomization.
+     */
+    jitterMinutes: smallint("jitter_minutes").notNull().default(0),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -179,6 +191,24 @@ export const loginSession = pgTable("login_session", {
   proxyDataKey: bytea("proxy_data_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One row per item actually obtained by a claim (a free game, a Prime sub, a points set). Kept
+ * as structured rows — rather than parsed out of a job's summary text — so the dashboard can
+ * list what was claimed and compute reliable stats over time.
+ */
+export const claimEvent = pgTable("claim_event", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  connectedAccountId: uuid("connected_account_id")
+    .notNull()
+    .references(() => connectedAccount.id, { onDelete: "cascade" }),
+  serviceId: text("service_id").notNull(),
+  // The job that obtained it; kept for traceability. Null if the job row is gone.
+  jobId: uuid("job_id").references(() => job.id, { onDelete: "set null" }),
+  kind: text("kind").notNull(), // game | prime_sub | points
+  title: text("title").notNull(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /** Postgres channel used for LISTEN/NOTIFY job-event relay to the web app's SSE stream. */

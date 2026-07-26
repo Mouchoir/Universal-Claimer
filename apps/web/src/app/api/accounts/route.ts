@@ -12,6 +12,7 @@ import {
   getService,
   hasConsent,
   listAccounts,
+  listClaimEvents,
   type ConnectionMethod,
 } from "@uc/db";
 import { getDb, getMasterKey } from "@/server/context";
@@ -23,15 +24,28 @@ export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
-  const accounts = await listAccounts(getDb().db);
-  // Only non-secret fields are returned (FR-008).
+  const { db } = getDb();
+  const accounts = await listAccounts(db);
+  // Only non-secret fields are returned (FR-008). displayName/facts are non-secret observations
+  // (the account's own username, active entitlements) surfaced in the dashboard.
   return NextResponse.json({
-    accounts: accounts.map((a) => ({
-      id: a.id,
-      serviceId: a.serviceId,
-      method: a.method,
-      status: a.status,
-    })),
+    accounts: await Promise.all(
+      accounts.map(async (a) => ({
+        id: a.id,
+        serviceId: a.serviceId,
+        method: a.method,
+        status: a.status,
+        displayName: a.displayName,
+        config: a.config,
+        facts: a.facts,
+        factsUpdatedAt: a.factsUpdatedAt,
+        recentClaims: (await listClaimEvents(db, { accountId: a.id, limit: 5 })).map((c) => ({
+          kind: c.kind,
+          title: c.title,
+          claimedAt: c.claimedAt,
+        })),
+      })),
+    ),
   });
 }
 
