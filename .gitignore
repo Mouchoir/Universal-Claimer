@@ -27,3 +27,5 @@ smoke-*.mjs
 # OS / editor
 .DS_Store
 Thumbs.db
+
+.relay-token
