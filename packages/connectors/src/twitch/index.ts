@@ -35,7 +35,7 @@ export class TwitchConnector implements Connector, InteractiveLogin {
       // previous wording plus an example username read as "enter your account name".
       label: "Streamer channel to spend your Prime sub on",
       required: true,
-      placeholder: "twitch.tv/<channel>",
+      placeholder: "e.g. EmptyProfile",
       help:
         "The channel you want to support with your free monthly Prime subscription — not your own " +
         "account. Your account is whichever one you connected above.",
