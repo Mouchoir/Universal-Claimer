@@ -33,6 +33,16 @@ export const SEED_SERVICES = [
       "could result in suspension of your Microsoft account and loss of points. You use this " +
       "at your own risk. Continue only if you accept this.",
   },
+  {
+    id: "primegaming",
+    displayName: "Amazon Prime Gaming",
+    connectorVersion: "0.1.0",
+    methods: ["assisted_login", "session_import"],
+    tosWarning:
+      "Automating Prime Gaming claims may violate the Amazon Prime Gaming Terms of Service and " +
+      "could result in suspension of your Amazon account. You use this at your own risk. " +
+      "Continue only if you accept this.",
+  },
 ] as const;
 
 /** Insert/refresh the seeded services (idempotent). */
