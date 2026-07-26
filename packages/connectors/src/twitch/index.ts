@@ -109,8 +109,14 @@ export class TwitchConnector implements Connector, InteractiveLogin {
           return { outcome: "requires_human_action", summary: `Captcha needed for "${channel}".` };
         }
       }
+      // The username comes from a cookie, so it's readable even when the channel was wrong —
+      // report it so the dashboard still shows which account is connected.
       if (res.notFound) {
-        return { outcome: "failed", summary: `Twitch channel "${channel}" was not found.` };
+        return {
+          outcome: "failed",
+          summary: `Twitch channel "${channel}" was not found.`,
+          accountFacts: { username: await driver.getUsername() },
+        };
       }
 
       // The session is open, so report the account's name and the current Prime sub for free —

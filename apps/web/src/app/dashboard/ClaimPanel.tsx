@@ -7,6 +7,8 @@ interface Entitlement {
   kind: string;
   channel?: string;
   endsAt?: string;
+  /** True when endsAt was derived from our claim history rather than reported by the service. */
+  endsAtEstimated?: boolean;
 }
 interface ClaimEvent {
   kind: string;
@@ -127,8 +129,15 @@ export function ClaimPanel() {
                     {ends ? (
                       <span style={{ color: "var(--uc-text-muted)" }}>
                         {" "}
-                        — ends {ends}
+                        — ends {e.endsAtEstimated ? "~" : ""}
+                        {ends}
                         {left !== null && left >= 0 && <> ({left} day{left === 1 ? "" : "s"} left)</>}
+                        {e.endsAtEstimated && (
+                          <span title="Twitch no longer exposes the exact date; estimated from when we claimed it (Prime subs last 30 days).">
+                            {" "}
+                            (est.)
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span style={{ color: "var(--uc-text-muted)" }}> — active</span>

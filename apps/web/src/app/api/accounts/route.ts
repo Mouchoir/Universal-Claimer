@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isValidProxyUrl, sealSecret } from "@uc/core";
+import { estimateBenefitEnd, isValidProxyUrl, sealSecret } from "@uc/core";
 import {
   defaultFingerprint,
   defaultRegistry,
@@ -14,6 +14,7 @@ import {
   listAccounts,
   listClaimEvents,
   type ConnectionMethod,
+  type Entitlement,
 } from "@uc/db";
 import { getDb, getMasterKey } from "@/server/context";
 import { jsonError } from "@/server/http";
@@ -21,6 +22,31 @@ import { connectAccountSchema, missingConfigKeys } from "@/server/schemas";
 import { isAuthenticated } from "@/server/session-cookie";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Fill in a missing entitlement end date from our own claim history. Twitch stopped exposing a
+ * subscription's end date anywhere scrapable, so when the service doesn't tell us we estimate it
+ * from when *we* claimed the benefit. Flagged `endsAtEstimated` so the UI can label it as such;
+ * a real date reported by the connector always wins.
+ */
+function withEstimatedEnd(
+  entitlements: Entitlement[] | undefined,
+  claims: { kind: string; title: string; claimedAt: Date }[],
+): (Entitlement & { endsAtEstimated?: boolean })[] | undefined {
+  if (!entitlements?.length) return entitlements;
+  return entitlements.map((e) => {
+    if (e.endsAt || e.kind !== "prime_sub") return e;
+    const last = claims.find(
+      (c) => c.kind === "prime_sub" && (!e.channel || c.title.toLowerCase() === e.channel.toLowerCase()),
+    );
+    if (!last) return e;
+    return {
+      ...e,
+      endsAt: estimateBenefitEnd(new Date(last.claimedAt)).toISOString(),
+      endsAtEstimated: true,
+    };
+  });
+}
 
 export async function GET(): Promise<NextResponse> {
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
@@ -30,21 +56,24 @@ export async function GET(): Promise<NextResponse> {
   // (the account's own username, active entitlements) surfaced in the dashboard.
   return NextResponse.json({
     accounts: await Promise.all(
-      accounts.map(async (a) => ({
-        id: a.id,
-        serviceId: a.serviceId,
-        method: a.method,
-        status: a.status,
-        displayName: a.displayName,
-        config: a.config,
-        facts: a.facts,
-        factsUpdatedAt: a.factsUpdatedAt,
-        recentClaims: (await listClaimEvents(db, { accountId: a.id, limit: 5 })).map((c) => ({
-          kind: c.kind,
-          title: c.title,
-          claimedAt: c.claimedAt,
-        })),
-      })),
+      accounts.map(async (a) => {
+        const claims = await listClaimEvents(db, { accountId: a.id, limit: 20 });
+        return {
+          id: a.id,
+          serviceId: a.serviceId,
+          method: a.method,
+          status: a.status,
+          displayName: a.displayName,
+          config: a.config,
+          facts: { ...a.facts, entitlements: withEstimatedEnd(a.facts.entitlements, claims) },
+          factsUpdatedAt: a.factsUpdatedAt,
+          recentClaims: claims.slice(0, 5).map((c) => ({
+            kind: c.kind,
+            title: c.title,
+            claimedAt: c.claimedAt,
+          })),
+        };
+      }),
     ),
   });
 }
