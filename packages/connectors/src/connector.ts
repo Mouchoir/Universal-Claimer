@@ -137,6 +137,13 @@ export interface Connector {
   readonly methods: ConnectionMethod[];
   /** Per-account config fields the connect flow must collect (e.g. Twitch channel). */
   readonly configFields?: ConfigField[];
+  /**
+   * How this service is naturally scheduled. `recurring` (the default) suits things that come
+   * back on a clock — Epic's weekly free games, daily Rewards points. `on_expiry` suits a benefit
+   * that lasts until a known date and is renewed when it runs out (a Twitch Prime sub): a
+   * daily/weekly slot would be meaningless there.
+   */
+  readonly schedulingMode?: "recurring" | "on_expiry";
 
   /** Validate/normalize a provided secret and return the fingerprint to persist. */
   authenticate(input: AuthInput, ctx: ConnectorContext): Promise<AuthResult>;

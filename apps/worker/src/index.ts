@@ -2,6 +2,7 @@ import {
   AntiCaptchaSolver,
   NullCaptchaSolver,
   applyJitter,
+  nextRunAfterExpiry,
   computeNextRun,
   createLogger,
   jitterSeconds,
@@ -215,10 +216,22 @@ export async function main(): Promise<void> {
     advance: async (s: ScheduleRow, now: Date) => {
       // Randomize the next run within the account's configured window so automatic claims don't
       // fire at an identical time every day (an obvious automation signal).
-      const next = applyJitter(
-        computeNextRun(s.frequency, s.hour, s.minute, s.dayOfWeek, now),
-        s.jitterMinutes ?? 0,
-      );
+      let next: Date;
+      if (s.frequency === "on_expiry") {
+        // Benefit-driven: re-read the entitlement the run just refreshed and aim at its new end
+        // date. Unknown (nothing observed yet) → look again tomorrow.
+        const account = await getAccount(db, s.connectedAccountId);
+        const endsAt = account?.facts.entitlements?.find((e) => e.endsAt)?.endsAt;
+        const parsed = endsAt ? Date.parse(endsAt) : NaN;
+        next = Number.isFinite(parsed)
+          ? nextRunAfterExpiry(new Date(parsed), s.jitterMinutes ?? 0)
+          : new Date(now.getTime() + 86_400_000);
+      } else {
+        next = applyJitter(
+          computeNextRun(s.frequency, s.hour, s.minute, s.dayOfWeek, now),
+          s.jitterMinutes ?? 0,
+        );
+      }
       await markScheduleRan(db, s.id, now, next);
     },
   };

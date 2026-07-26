@@ -1,4 +1,4 @@
-export type Frequency = "daily" | "weekly";
+export type Frequency = "daily" | "weekly" | "on_expiry";
 
 /**
  * Compute the next run time for a schedule, in the host's local timezone, strictly after
@@ -64,4 +64,20 @@ export const PRIME_SUB_DAYS = 30;
  */
 export function estimateBenefitEnd(claimedAt: Date, days = PRIME_SUB_DAYS): Date {
   return new Date(claimedAt.getTime() + days * 86_400_000);
+}
+
+/**
+ * When to renew a benefit that expires on a known date (a Twitch Prime sub, say). Recurring
+ * daily/weekly slots make no sense for those: the natural moment is when the current one runs
+ * out. The random offset is one-sided — never earlier than the expiry, since renewing before the
+ * benefit ends would fail — so the run lands somewhere in [endsAt, endsAt + jitterMinutes].
+ */
+export function nextRunAfterExpiry(
+  endsAt: Date,
+  jitterMinutes = 0,
+  rand: () => number = Math.random,
+): Date {
+  const window = Number.isFinite(jitterMinutes) && jitterMinutes > 0 ? jitterMinutes : 0;
+  const offset = Math.floor(rand() * (window + 1));
+  return new Date(endsAt.getTime() + offset * 60_000);
 }

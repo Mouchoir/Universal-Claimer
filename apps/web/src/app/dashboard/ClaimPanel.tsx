@@ -24,6 +24,7 @@ interface Account {
   config?: Record<string, string>;
   facts?: { entitlements?: Entitlement[] };
   recentClaims?: ClaimEvent[];
+  schedulingMode?: "recurring" | "on_expiry";
 }
 
 /** Format an ISO date for display, or null when it's missing/unparseable. */
@@ -180,7 +181,8 @@ export function ClaimPanel() {
 
               <ScheduleEditor
                 accountId={a.id}
-                suggestedNextRun={a.facts?.entitlements?.find((e) => e.endsAt)?.endsAt}
+                schedulingMode={a.schedulingMode ?? "recurring"}
+                benefitEndsAt={a.facts?.entitlements?.find((e) => e.endsAt)?.endsAt}
               />
             </div>
           ))}
