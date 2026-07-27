@@ -10,7 +10,7 @@ export default function ConnectPage() {
 
   const [warning, setWarning] = useState<string>("");
   const [configFields, setConfigFields] = useState<
-    { key: string; label: string; required: boolean; placeholder?: string }[]
+    { key: string; label: string; required: boolean; placeholder?: string; help?: string }[]
   >([]);
   const [config, setConfig] = useState<Record<string, string>>({});
   const [proxy, setProxy] = useState("");
@@ -162,6 +162,9 @@ export default function ConnectPage() {
                       }
                     }}
                   />
+                  {f.help && (
+                    <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>{f.help}</span>
+                  )}
                   {fieldErrors[f.key] && (
                     <span style={{ color: "var(--uc-danger)", fontSize: 13 }}>{fieldErrors[f.key]}</span>
                   )}

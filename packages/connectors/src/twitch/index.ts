@@ -31,9 +31,14 @@ export class TwitchConnector implements Connector, InteractiveLogin {
   readonly configFields: ConfigField[] = [
     {
       key: "channel",
-      label: "Twitch channel to resubscribe to",
+      // Explicitly the *streamer* being subscribed to, not the operator's own account — the
+      // previous wording plus an example username read as "enter your account name".
+      label: "Streamer channel to spend your Prime sub on",
       required: true,
-      placeholder: "e.g. ninja",
+      placeholder: "e.g. EmptyProfile",
+      help:
+        "The channel you want to support with your free monthly Prime subscription — not your own " +
+        "account. Your account is whichever one you connected above.",
     },
   ];
 
