@@ -13,6 +13,7 @@ import {
   hasConsent,
   listAccounts,
   listClaimEvents,
+  reenableConnector,
   replaceAccountSecret,
   type ConnectionMethod,
   type Entitlement,
@@ -156,6 +157,9 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   if (existing) {
     await replaceAccountSecret(db, existing.id, values);
+    // The usual reason a connector auto-disabled is the session that just got replaced, so
+    // clear the flag rather than leaving the operator with a dead, unrunnable service.
+    await reenableConnector(db, service.id);
     return NextResponse.json({ accountId: existing.id, status: "connected", reconnected: true });
   }
 
