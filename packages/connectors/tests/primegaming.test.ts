@@ -32,6 +32,7 @@ function fakeDriver(over: Partial<PrimeGamingPageDriver> = {}): PrimeGamingPageD
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
     getUsername: async () => "EmptyProfile",
+    servedHost: async () => "gaming.amazon.com",
     getCookies: async () => [],
     goto: async () => {},
     ...over,
@@ -193,5 +194,23 @@ describe("isAmazonAuthCookie", () => {
   it("rejects auth-looking cookies from other sites", () => {
     expect(isAmazonAuthCookie("at-main", ".example.com")).toBe(false);
     expect(isAmazonAuthCookie("at-main", "notamazon.org")).toBe(false);
+  });
+});
+
+describe("PrimeGamingConnector marketplace mismatch", () => {
+  it("names the host that was served so the operator knows where to sign in", async () => {
+    // Amazon routes Prime Gaming by region: a session valid on amazon.com can land signed-out on
+    // luna.amazon.fr. The message must say which host, not just "reconnect".
+    const c = new PrimeGamingConnector({
+      createDriver: () =>
+        fakeDriver({
+          isAuthenticated: async () => false,
+          servedHost: async () => "luna.amazon.fr",
+        }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("reauth_needed");
+    expect(res.summary).toContain("luna.amazon.fr");
+    expect(res.summary).toMatch(/sign in/i);
   });
 });

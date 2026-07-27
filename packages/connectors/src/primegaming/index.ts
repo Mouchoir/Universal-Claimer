@@ -75,9 +75,15 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
 
       if (!(await driver.isAuthenticated())) {
+        // Amazon signs you in per marketplace and Prime Gaming routes by region, so a session
+        // that is perfectly valid on one Amazon domain can land signed-out on another. Naming
+        // the host that was actually served turns a dead end into an actionable message.
+        const host = await driver.servedHost();
         return {
           outcome: "reauth_needed",
-          summary: "Amazon session is no longer authenticated; reconnect the account.",
+          summary:
+            `Not signed in on ${host}, which is where Prime Gaming served your region. ` +
+            `Sign in on ${host} in your browser, then re-export the session and reconnect.`,
         };
       }
       authenticated = true;
