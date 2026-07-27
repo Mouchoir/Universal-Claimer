@@ -42,6 +42,17 @@ export function cleanOfferTitle(rawTitle: string, cardText: string): string {
     .trim();
 }
 
+/**
+ * Does this cookie mark a signed-in Amazon session? The auth-token cookie is `at-main` on
+ * amazon.com but `at-acb<country>` on the other marketplaces (`at-acbfr` for amazon.fr,
+ * `at-acbde` for amazon.de …), and `sess-at-*` is its session-scoped twin — so matching by
+ * pattern, on any Amazon domain, is what makes this work for accounts worldwide.
+ */
+export function isAmazonAuthCookie(name: string, domain: string): boolean {
+  if (!/(^|\.)amazon\./i.test(domain)) return false;
+  return /^(sess-)?at-(main|acb[a-z]{2})$/i.test(name);
+}
+
 /** Make an offer href absolute, whichever Amazon origin served the card. */
 export function absoluteOfferUrl(href: string, origin = BASE_ORIGIN): string {
   if (!href) return "";
@@ -82,15 +93,14 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
   }
 
   /**
-   * Amazon marks a signed-in session with its `at-main` auth-token cookie (`sess-at-main` on some
-   * marketplaces). Checking the cookie rather than page text keeps this independent of the
-   * account's language.
+   * Checking the auth cookie rather than page text keeps this independent of the account's
+   * language — and of its marketplace, which matters just as much: a French account signs in on
+   * amazon.fr / luna.amazon.fr, a German one on amazon.de, and so on. All cookies are inspected
+   * (not a fixed URL list) and matched by name pattern.
    */
   async isAuthenticated(): Promise<boolean> {
-    const cookies = await this.context.cookies(["https://www.amazon.com", "https://gaming.amazon.com"]);
-    return cookies.some(
-      (c) => (c.name === "at-main" || c.name === "sess-at-main" || c.name === "at-acbfr") && Boolean(c.value),
-    );
+    const cookies = await this.context.cookies();
+    return cookies.some((c) => isAmazonAuthCookie(c.name, c.domain) && Boolean(c.value));
   }
 
   async listClaimableGames(): Promise<PrimeOffer[]> {

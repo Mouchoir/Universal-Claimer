@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullCaptchaSolver, createLogger, type CaptchaSolver } from "@uc/core";
 import { PrimeGamingConnector } from "../src/primegaming/index.js";
-import { absoluteOfferUrl, cleanOfferTitle, type PrimeGamingPageDriver } from "../src/primegaming/driver.js";
+import { absoluteOfferUrl, cleanOfferTitle, isAmazonAuthCookie, type PrimeGamingPageDriver } from "../src/primegaming/driver.js";
 import { defaultFingerprint } from "../src/fingerprint.js";
 import type { AuthInput, ConnectorContext, JobEvent, SessionHandle } from "../src/connector.js";
 
@@ -161,5 +161,37 @@ describe("PrimeGamingConnector.claim", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.reason).toContain("session import");
+  });
+});
+
+describe("isAmazonAuthCookie", () => {
+  it("accepts the .com auth cookie", () => {
+    expect(isAmazonAuthCookie("at-main", ".amazon.com")).toBe(true);
+  });
+
+  it("accepts per-marketplace auth cookies (the reason a French account failed)", () => {
+    expect(isAmazonAuthCookie("at-acbfr", ".amazon.fr")).toBe(true);
+    expect(isAmazonAuthCookie("at-acbde", ".amazon.de")).toBe(true);
+    expect(isAmazonAuthCookie("at-acbjp", ".amazon.co.jp")).toBe(true);
+  });
+
+  it("accepts the session-scoped variant", () => {
+    expect(isAmazonAuthCookie("sess-at-main", ".amazon.com")).toBe(true);
+    expect(isAmazonAuthCookie("sess-at-acbfr", ".amazon.fr")).toBe(true);
+  });
+
+  it("works on Luna and Gaming subdomains", () => {
+    expect(isAmazonAuthCookie("at-acbfr", "luna.amazon.fr")).toBe(true);
+    expect(isAmazonAuthCookie("at-main", "gaming.amazon.com")).toBe(true);
+  });
+
+  it("rejects non-auth Amazon cookies", () => {
+    expect(isAmazonAuthCookie("session-id", ".amazon.fr")).toBe(false);
+    expect(isAmazonAuthCookie("ubid-main", ".amazon.com")).toBe(false);
+  });
+
+  it("rejects auth-looking cookies from other sites", () => {
+    expect(isAmazonAuthCookie("at-main", ".example.com")).toBe(false);
+    expect(isAmazonAuthCookie("at-main", "notamazon.org")).toBe(false);
   });
 });
