@@ -1,6 +1,8 @@
 import type {
+  AccountFacts,
   AuthInput,
   BrowserCookie,
+  ClaimedItem,
   Connector,
   ConnectorContext,
   Fingerprint,
@@ -44,6 +46,17 @@ export interface ClaimJobDeps {
   pauseForHumanAction(jobId: string, summary: string): Promise<void>;
   markNeedsReauth(connectedAccountId: string): Promise<void>;
   recordRun(serviceId: string, version: string, success: boolean, outcome: ClaimOutcome): Promise<void>;
+  /**
+   * Persist what the run obtained (one claim_event per item) and any account facts it observed
+   * (username, active entitlements) — the data behind the dashboard's history and stats.
+   */
+  recordInsights(input: {
+    jobId: string;
+    connectedAccountId: string;
+    serviceId: string;
+    claimedItems?: ClaimedItem[];
+    accountFacts?: AccountFacts;
+  }): Promise<void>;
   /** Best-effort operator notification (portal SSE + optional webhook). */
   notify(message: string): Promise<void>;
   /** Build a connector context whose browser uses the given per-account proxy (if any). */
@@ -81,11 +94,30 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
   const input = toAuthInput(account.method, account.secretJson);
   const ctx = deps.makeContext(account.proxy);
 
-  let result: { outcome: ClaimOutcome; summary: string };
+  let result: {
+    outcome: ClaimOutcome;
+    summary: string;
+    claimedItems?: ClaimedItem[];
+    accountFacts?: AccountFacts;
+  };
   try {
     result = await connector.claim(input, account.fingerprint, account.config, ctx);
   } catch (err) {
     result = { outcome: "failed", summary: `claim error: ${err instanceof Error ? err.name : "unknown"}` };
+  }
+
+  // Record history + account facts before branching on the outcome, so facts observed during a
+  // run are kept even when nothing was claimed. Never let this fail the job.
+  if (result.claimedItems?.length || result.accountFacts) {
+    await deps
+      .recordInsights({
+        jobId: job.jobId,
+        connectedAccountId: job.connectedAccountId,
+        serviceId: account.serviceId,
+        claimedItems: result.claimedItems,
+        accountFacts: result.accountFacts,
+      })
+      .catch(() => undefined);
   }
 
   // Human action needed → pause (non-terminal), notify, and stop here (no terminal outcome,

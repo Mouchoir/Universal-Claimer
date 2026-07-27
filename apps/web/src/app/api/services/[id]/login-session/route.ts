@@ -36,9 +36,8 @@ export async function POST(
   if (!(await hasConsent(db, service.id))) {
     return jsonError("CONSENT_REQUIRED", "You must consent before connecting.", 400);
   }
-  if (await getAccountByService(db, service.id)) {
-    return jsonError("ACCOUNT_EXISTS", "This service already has a connected account.", 409);
-  }
+  // An existing account is fine: assisted login is also how an expired session is reconnected.
+  // The captured cookies replace the stored secret (see the login worker's capture step).
   const missing = missingConfigKeys(defaultRegistry().get(service.id)?.configFields, config);
   if (missing.length > 0) {
     return jsonError("CONFIG_REQUIRED", `Missing required config: ${missing.join(", ")}`, 400);

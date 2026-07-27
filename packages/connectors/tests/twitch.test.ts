@@ -27,6 +27,8 @@ function fakeDriver(over: Partial<TwitchPageDriver>): TwitchPageDriver {
     isAuthenticated: async () => true,
     loginWithPassword: async () => ({ authenticated: true }),
     resubWithPrime: async () => ({ subscribed: true }),
+    getUsername: async () => "EmptyProfile",
+    getPrimeSubEnd: async () => "2026-08-25T00:00:00.000Z",
     getCookies: async () => [],
     goto: async () => {},
     ...over,

@@ -1,4 +1,4 @@
-export type Frequency = "daily" | "weekly";
+export type Frequency = "daily" | "weekly" | "on_expiry";
 
 /**
  * Compute the next run time for a schedule, in the host's local timezone, strictly after
@@ -34,4 +34,50 @@ export function computeNextRun(
  */
 export function jitterSeconds(maxSeconds = 45, rand: () => number = Math.random): number {
   return Math.floor(rand() * (maxSeconds + 1));
+}
+
+/**
+ * Shift a scheduled run by a random offset within ±`jitterMinutes`, so automatic claims don't
+ * land on a machine-perfect time every day — an obvious automation signal to the services
+ * (Constitution Principle VII). Whole-minute resolution; 0 or less returns the time unchanged.
+ * Injectable RNG for deterministic tests.
+ */
+export function applyJitter(
+  runAt: Date,
+  jitterMinutes: number,
+  rand: () => number = Math.random,
+): Date {
+  if (!Number.isFinite(jitterMinutes) || jitterMinutes <= 0) return runAt;
+  // rand() in [0,1) → offset in [-jitter, +jitter] minutes.
+  const offset = Math.round((rand() * 2 - 1) * jitterMinutes);
+  return new Date(runAt.getTime() + offset * 60_000);
+}
+
+/** A Twitch Prime subscription lasts 30 days and must be renewed manually. */
+export const PRIME_SUB_DAYS = 30;
+
+/**
+ * Estimate when a benefit we claimed ourselves runs out, from the moment we claimed it. Twitch no
+ * longer exposes a subscription's end date anywhere scrapable (the old /settings/subscriptions page
+ * redirects away), so when the service doesn't tell us, we derive it from our own claim history —
+ * which is exactly what scheduling the renewal needs. Callers must present this as an estimate.
+ */
+export function estimateBenefitEnd(claimedAt: Date, days = PRIME_SUB_DAYS): Date {
+  return new Date(claimedAt.getTime() + days * 86_400_000);
+}
+
+/**
+ * When to renew a benefit that expires on a known date (a Twitch Prime sub, say). Recurring
+ * daily/weekly slots make no sense for those: the natural moment is when the current one runs
+ * out. The random offset is one-sided — never earlier than the expiry, since renewing before the
+ * benefit ends would fail — so the run lands somewhere in [endsAt, endsAt + jitterMinutes].
+ */
+export function nextRunAfterExpiry(
+  endsAt: Date,
+  jitterMinutes = 0,
+  rand: () => number = Math.random,
+): Date {
+  const window = Number.isFinite(jitterMinutes) && jitterMinutes > 0 ? jitterMinutes : 0;
+  const offset = Math.floor(rand() * (window + 1));
+  return new Date(endsAt.getTime() + offset * 60_000);
 }

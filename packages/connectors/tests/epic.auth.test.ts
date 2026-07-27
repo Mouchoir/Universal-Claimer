@@ -31,6 +31,7 @@ function fakeDriver(overrides: Partial<EpicPageDriver>): EpicPageDriver {
     loginWithPassword: async () => ({ authenticated: true }),
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
+    getUsername: async () => "EmptyProfile",
     getCookies: async () => [],
     goto: async () => {},
     ...overrides,

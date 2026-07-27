@@ -93,11 +93,16 @@ export class EpicConnector implements Connector, InteractiveLogin {
         };
       }
 
+      // Read the account name as soon as we know the session is good, so the dashboard learns it
+      // even on the (common) weeks where there is nothing to claim.
+      const accountFacts = { username: await driver.getUsername() };
+
       const games = await driver.listClaimableGames();
       if (games.length === 0) {
         return {
           outcome: "nothing_to_claim",
           summary: "No free game available to claim right now.",
+          accountFacts,
         };
       }
 
@@ -129,17 +134,24 @@ export class EpicConnector implements Connector, InteractiveLogin {
 
       if (claimed.length > 0) {
         const suffix = failed.length ? `; could not complete: ${failed.join(", ")}` : "";
-        return { outcome: "claimed", summary: `Claimed: ${claimed.join(", ")}${suffix}` };
+        return {
+          outcome: "claimed",
+          summary: `Claimed: ${claimed.join(", ")}${suffix}`,
+          claimedItems: claimed.map((title) => ({ kind: "game" as const, title })),
+          accountFacts,
+        };
       }
       if (failed.length > 0) {
         return {
           outcome: "failed",
           summary: `Found free game(s) but could not complete checkout for: ${failed.join(", ")}.`,
+          accountFacts,
         };
       }
       return {
         outcome: "nothing_to_claim",
         summary: `Nothing new to claim (${games.length} free game(s) already owned).`,
+        accountFacts,
       };
     } finally {
       await ctx.browser.close(session);

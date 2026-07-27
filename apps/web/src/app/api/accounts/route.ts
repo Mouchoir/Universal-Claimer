@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isValidProxyUrl, sealSecret } from "@uc/core";
+import { estimateBenefitEnd, isValidProxyUrl, sealSecret } from "@uc/core";
 import {
   defaultFingerprint,
   defaultRegistry,
@@ -12,7 +12,10 @@ import {
   getService,
   hasConsent,
   listAccounts,
+  listClaimEvents,
+  replaceAccountSecret,
   type ConnectionMethod,
+  type Entitlement,
 } from "@uc/db";
 import { getDb, getMasterKey } from "@/server/context";
 import { jsonError } from "@/server/http";
@@ -21,17 +24,59 @@ import { isAuthenticated } from "@/server/session-cookie";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Fill in a missing entitlement end date from our own claim history. Twitch stopped exposing a
+ * subscription's end date anywhere scrapable, so when the service doesn't tell us we estimate it
+ * from when *we* claimed the benefit. Flagged `endsAtEstimated` so the UI can label it as such;
+ * a real date reported by the connector always wins.
+ */
+function withEstimatedEnd(
+  entitlements: Entitlement[] | undefined,
+  claims: { kind: string; title: string; claimedAt: Date }[],
+): (Entitlement & { endsAtEstimated?: boolean })[] | undefined {
+  if (!entitlements?.length) return entitlements;
+  return entitlements.map((e) => {
+    if (e.endsAt || e.kind !== "prime_sub") return e;
+    const last = claims.find(
+      (c) => c.kind === "prime_sub" && (!e.channel || c.title.toLowerCase() === e.channel.toLowerCase()),
+    );
+    if (!last) return e;
+    return {
+      ...e,
+      endsAt: estimateBenefitEnd(new Date(last.claimedAt)).toISOString(),
+      endsAtEstimated: true,
+    };
+  });
+}
+
 export async function GET(): Promise<NextResponse> {
   if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
-  const accounts = await listAccounts(getDb().db);
-  // Only non-secret fields are returned (FR-008).
+  const { db } = getDb();
+  const accounts = await listAccounts(db);
+  // Only non-secret fields are returned (FR-008). displayName/facts are non-secret observations
+  // (the account's own username, active entitlements) surfaced in the dashboard.
   return NextResponse.json({
-    accounts: accounts.map((a) => ({
-      id: a.id,
-      serviceId: a.serviceId,
-      method: a.method,
-      status: a.status,
-    })),
+    accounts: await Promise.all(
+      accounts.map(async (a) => {
+        const claims = await listClaimEvents(db, { accountId: a.id, limit: 20 });
+        return {
+          id: a.id,
+          serviceId: a.serviceId,
+          method: a.method,
+          status: a.status,
+          displayName: a.displayName,
+          schedulingMode: defaultRegistry().get(a.serviceId)?.schedulingMode ?? "recurring",
+          config: a.config,
+          facts: { ...a.facts, entitlements: withEstimatedEnd(a.facts.entitlements, claims) },
+          factsUpdatedAt: a.factsUpdatedAt,
+          recentClaims: claims.slice(0, 5).map((c) => ({
+            kind: c.kind,
+            title: c.title,
+            claimedAt: c.claimedAt,
+          })),
+        };
+      }),
+    ),
   });
 }
 
@@ -53,9 +98,10 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!(await hasConsent(db, service.id))) {
     return jsonError("CONSENT_REQUIRED", "You must consent before connecting.", 400);
   }
-  if (await getAccountByService(db, service.id)) {
-    return jsonError("ACCOUNT_EXISTS", "This service already has a connected account.", 409);
-  }
+  // An existing account for this service is replaced rather than rejected: reaching this page for
+  // a connected service means "reconnect it" (typically after the session expired). The account
+  // id, claim history and schedule are preserved.
+  const existing = await getAccountByService(db, service.id);
 
   const configFields = defaultRegistry().get(service.id)?.configFields;
   const missing = missingConfigKeys(configFields, input.config);
@@ -98,8 +144,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   const sealed = sealSecret(payload, getMasterKey());
-  const account = await createAccount(db, {
-    serviceId: service.id,
+  const values = {
     method: input.method as ConnectionMethod,
     secretCiphertext: sealed.ciphertext,
     secretDataKey: sealed.wrappedDataKey,
@@ -107,7 +152,13 @@ export async function POST(req: Request): Promise<NextResponse> {
     config: input.config ?? {},
     proxyCiphertext: proxySeal?.ciphertext ?? null,
     proxyDataKey: proxySeal?.wrappedDataKey ?? null,
-  });
+  };
 
+  if (existing) {
+    await replaceAccountSecret(db, existing.id, values);
+    return NextResponse.json({ accountId: existing.id, status: "connected", reconnected: true });
+  }
+
+  const account = await createAccount(db, { serviceId: service.id, ...values });
   return NextResponse.json({ accountId: account.id, status: account.status }, { status: 201 });
 }

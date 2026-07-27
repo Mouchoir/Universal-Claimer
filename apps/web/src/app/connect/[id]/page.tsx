@@ -23,6 +23,7 @@ export default function ConnectPage() {
   const [totpSeed, setTotpSeed] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isReconnect, setIsReconnect] = useState(false);
   const [busy, setBusy] = useState(false);
 
   /** Validate required connector config fields client-side; highlight + focus the first empty one. */
@@ -47,6 +48,11 @@ export default function ConnectPage() {
       .then((d) => {
         setWarning(d.warning ?? "");
         setConfigFields(d.configFields ?? []);
+        // Reconnecting an existing account: consent was already accepted, and its config (e.g.
+        // the Twitch channel) is carried over so the operator only re-supplies the session.
+        if (d.consented) setConsented(true);
+        if (d.hasAccount) setIsReconnect(true);
+        if (d.existingConfig) setConfig(d.existingConfig);
       })
       .catch(() => setWarning(""));
   }, [serviceId]);
@@ -112,7 +118,12 @@ export default function ConnectPage() {
 
   return (
     <main>
-      <h1>Connect {serviceId}</h1>
+      <h1>{isReconnect ? `Reconnect ${serviceId}` : `Connect ${serviceId}`}</h1>
+      {isReconnect && (
+        <p style={{ color: "var(--uc-text-muted)" }}>
+          Supply a fresh session for this account. Its history and schedule are kept.
+        </p>
+      )}
 
       {!consented ? (
         <div className="uc-card" style={{ marginTop: 16, display: "grid", gap: 12 }}>

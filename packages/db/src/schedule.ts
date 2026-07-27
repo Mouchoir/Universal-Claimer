@@ -2,7 +2,7 @@ import { and, eq, lte } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { schedule } from "./schema.js";
 
-export type Frequency = "daily" | "weekly";
+export type Frequency = "daily" | "weekly" | "on_expiry";
 
 export interface ScheduleInput {
   frequency: Frequency;
@@ -10,6 +10,8 @@ export interface ScheduleInput {
   minute: number;
   dayOfWeek?: number | null; // required for weekly
   enabled: boolean;
+  /** Randomize each run by up to ± this many minutes (0 = exact time). */
+  jitterMinutes?: number;
   nextRunAt: Date | null;
 }
 
@@ -28,6 +30,7 @@ function toRow(r: typeof schedule.$inferSelect): ScheduleRow {
     minute: r.minute,
     dayOfWeek: r.dayOfWeek,
     enabled: r.enabled,
+    jitterMinutes: r.jitterMinutes,
     nextRunAt: r.nextRunAt,
     lastRunAt: r.lastRunAt,
   };
@@ -58,6 +61,7 @@ export async function upsertSchedule(
     minute: input.minute,
     dayOfWeek: input.dayOfWeek ?? null,
     enabled: input.enabled,
+    jitterMinutes: input.jitterMinutes ?? 0,
     nextRunAt: input.nextRunAt,
     updatedAt: new Date(),
   };
