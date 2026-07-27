@@ -2,6 +2,7 @@ import { ConnectorRegistry } from "./registry.js";
 import { EpicConnector } from "./epic/index.js";
 import { TwitchConnector } from "./twitch/index.js";
 import { MsRewardsConnector } from "./msrewards/index.js";
+import { PrimeGamingConnector } from "./primegaming/index.js";
 
 /**
  * The registry of all built-in connectors. Constructing them is cheap and pulls in no
@@ -13,5 +14,6 @@ export function defaultRegistry(): ConnectorRegistry {
   registry.register(new EpicConnector());
   registry.register(new TwitchConnector());
   registry.register(new MsRewardsConnector());
+  registry.register(new PrimeGamingConnector());
   return registry;
 }

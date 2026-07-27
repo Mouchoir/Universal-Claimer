@@ -113,7 +113,11 @@ export class MsRewardsConnector implements Connector, InteractiveLogin {
             });
             // Return progress made so far as a success if any, else defer to human action.
             return done > 0
-              ? { outcome: "claimed", summary: `Completed ${done} searches before a verification.` }
+              ? {
+                  outcome: "claimed",
+                  summary: `Completed ${done} searches before a verification.`,
+                  claimedItems: [{ kind: "points" as const, title: `${done} Rewards searches` }],
+                }
               : { outcome: "requires_human_action", summary: "Verification required before searches." };
           }
         }
@@ -125,7 +129,12 @@ export class MsRewardsConnector implements Connector, InteractiveLogin {
       if (done === 0) {
         return { outcome: "failed", summary: "Could not complete any Rewards search." };
       }
-      return { outcome: "claimed", summary: `Completed ${done} Rewards searches.` };
+      // Record what the run obtained so it shows in the activity history and stats.
+      return {
+        outcome: "claimed",
+        summary: `Completed ${done} Rewards searches.`,
+        claimedItems: [{ kind: "points" as const, title: `${done} Rewards searches` }],
+      };
     } finally {
       await ctx.browser.close(session);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, jitterSeconds } from "./schedule.js";
+import { PRIME_SUB_DAYS, applyJitter, computeNextRun, estimateBenefitEnd, jitterSeconds, nextRunAfterExpiry } from "./schedule.js";
 
 describe("computeNextRun (local time)", () => {
   it("daily: later today when the time is still ahead", () => {
@@ -37,5 +37,76 @@ describe("jitterSeconds", () => {
     expect(jitterSeconds(45, () => 0)).toBe(0);
     expect(jitterSeconds(45, () => 0.999999)).toBe(45);
     expect(jitterSeconds(45, () => 0.5)).toBe(23);
+  });
+});
+
+describe("applyJitter", () => {
+  const base = new Date("2026-07-25T09:00:00.000Z");
+
+  it("returns the time unchanged when jitter is zero or negative", () => {
+    expect(applyJitter(base, 0).getTime()).toBe(base.getTime());
+    expect(applyJitter(base, -5).getTime()).toBe(base.getTime());
+  });
+
+  it("shifts earlier at the low end of the RNG range", () => {
+    // rand()=0 → offset = -jitter
+    expect(applyJitter(base, 30, () => 0).getTime()).toBe(base.getTime() - 30 * 60_000);
+  });
+
+  it("shifts later at the high end of the RNG range", () => {
+    // rand()→1 → offset = +jitter
+    expect(applyJitter(base, 30, () => 0.999999).getTime()).toBe(base.getTime() + 30 * 60_000);
+  });
+
+  it("leaves the time unchanged at the midpoint", () => {
+    expect(applyJitter(base, 30, () => 0.5).getTime()).toBe(base.getTime());
+  });
+
+  it("always stays within the requested window", () => {
+    for (const r of [0, 0.13, 0.42, 0.77, 0.99]) {
+      const delta = Math.abs(applyJitter(base, 20, () => r).getTime() - base.getTime());
+      expect(delta).toBeLessThanOrEqual(20 * 60_000);
+    }
+  });
+});
+
+describe("estimateBenefitEnd", () => {
+  it("adds the Prime sub duration by default", () => {
+    const claimed = new Date("2026-07-26T10:00:00.000Z");
+    expect(estimateBenefitEnd(claimed).toISOString()).toBe("2026-08-25T10:00:00.000Z");
+  });
+
+  it("accepts a custom duration", () => {
+    const claimed = new Date("2026-07-26T10:00:00.000Z");
+    expect(estimateBenefitEnd(claimed, 7).toISOString()).toBe("2026-08-02T10:00:00.000Z");
+  });
+
+  it("uses the documented 30-day Prime period", () => {
+    expect(PRIME_SUB_DAYS).toBe(30);
+  });
+});
+
+describe("nextRunAfterExpiry", () => {
+  const ends = new Date("2026-08-16T21:13:40.000Z");
+
+  it("runs exactly at expiry with no randomization", () => {
+    expect(nextRunAfterExpiry(ends, 0).getTime()).toBe(ends.getTime());
+  });
+
+  it("never schedules before the benefit expires", () => {
+    for (const r of [0, 0.25, 0.5, 0.99]) {
+      expect(nextRunAfterExpiry(ends, 600, () => r).getTime()).toBeGreaterThanOrEqual(ends.getTime());
+    }
+  });
+
+  it("stays inside the randomization window", () => {
+    const max = ends.getTime() + 600 * 60_000;
+    expect(nextRunAfterExpiry(ends, 600, () => 0.999999).getTime()).toBeLessThanOrEqual(max);
+  });
+
+  it("spreads runs across the window", () => {
+    const a = nextRunAfterExpiry(ends, 600, () => 0.1).getTime();
+    const b = nextRunAfterExpiry(ends, 600, () => 0.9).getTime();
+    expect(b).toBeGreaterThan(a);
   });
 });

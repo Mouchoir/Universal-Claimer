@@ -3,11 +3,44 @@
 import { useEffect, useState } from "react";
 import { ScheduleEditor } from "./ScheduleEditor";
 
+interface Entitlement {
+  kind: string;
+  channel?: string;
+  endsAt?: string;
+  /** True when endsAt was derived from our claim history rather than reported by the service. */
+  endsAtEstimated?: boolean;
+}
+interface ClaimEvent {
+  kind: string;
+  title: string;
+  claimedAt: string;
+}
 interface Account {
   id: string;
   serviceId: string;
   method: string;
   status: string;
+  displayName?: string | null;
+  config?: Record<string, string>;
+  facts?: { entitlements?: Entitlement[] };
+  recentClaims?: ClaimEvent[];
+  schedulingMode?: "recurring" | "on_expiry";
+}
+
+/** Format an ISO date for display, or null when it's missing/unparseable. */
+function formatDate(iso?: string | null): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Whole days from now until `iso` (negative when past); null when unknown. */
+function daysUntil(iso?: string | null): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return Math.ceil((t - Date.now()) / 86_400_000);
 }
 interface Job {
   id: string;
@@ -72,13 +105,85 @@ export function ClaimPanel() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <strong>{a.serviceId}</strong>
+                  {a.displayName && (
+                    <span style={{ marginLeft: 8, color: "var(--uc-text)" }}>
+                      · {a.displayName}
+                    </span>
+                  )}
                   <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
                     {a.method} — {a.status}
                   </div>
                 </div>
-                <button onClick={() => runClaim(a.id)}>Run claim</button>
+                {a.status === "needs_reauth" ? (
+                  <a href={`/connect/${a.serviceId}`}>
+                    <button>Reconnect</button>
+                  </a>
+                ) : (
+                  <button onClick={() => runClaim(a.id)}>Run claim</button>
+                )}
               </div>
-              <ScheduleEditor accountId={a.id} />
+
+              {/* Explain the dead session and what to do, instead of just a status word. */}
+              {a.status === "needs_reauth" && (
+                <p className="uc-warning" style={{ fontSize: 13, marginTop: 8 }}>
+                  This session expired, so claims can&apos;t run. Services keep browser sessions
+                  alive only for a while (Epic&apos;s login tokens last about two days), so it needs
+                  reconnecting. Use <strong>Reconnect</strong> — the fastest way is the session
+                  exporter extension.
+                </p>
+              )}
+
+              {/* Active benefits (e.g. a Twitch Prime sub and when it runs out). */}
+              {a.facts?.entitlements?.map((e, i) => {
+                const ends = formatDate(e.endsAt);
+                const left = daysUntil(e.endsAt);
+                return (
+                  <div key={i} style={{ marginTop: 8, fontSize: 14 }}>
+                    <span style={{ color: "var(--uc-success)" }}>●</span>{" "}
+                    {e.kind === "prime_sub" ? "Prime sub" : e.kind}
+                    {e.channel && <> to <strong>{e.channel}</strong></>}
+                    {ends ? (
+                      <span style={{ color: "var(--uc-text-muted)" }}>
+                        {" "}
+                        — ends {e.endsAtEstimated ? "~" : ""}
+                        {ends}
+                        {left !== null && left >= 0 && <> ({left} day{left === 1 ? "" : "s"} left)</>}
+                        {e.endsAtEstimated && (
+                          <span title="Twitch no longer exposes the exact date; estimated from when we claimed it (Prime subs last 30 days).">
+                            {" "}
+                            (est.)
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span style={{ color: "var(--uc-text-muted)" }}> — active</span>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* What this account has actually obtained, most recent first. */}
+              {a.recentClaims && a.recentClaims.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 14 }}>
+                  <span style={{ color: "var(--uc-text-muted)" }}>Recently claimed: </span>
+                  {a.recentClaims.map((c, i) => (
+                    <span key={i}>
+                      {i > 0 && ", "}
+                      {c.title}
+                      <span style={{ color: "var(--uc-text-muted)" }}>
+                        {" "}
+                        ({formatDate(c.claimedAt) ?? "—"})
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <ScheduleEditor
+                accountId={a.id}
+                schedulingMode={a.schedulingMode ?? "recurring"}
+                benefitEndsAt={a.facts?.entitlements?.find((e) => e.endsAt)?.endsAt}
+              />
             </div>
           ))}
         </div>

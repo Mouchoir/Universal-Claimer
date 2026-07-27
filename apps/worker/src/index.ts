@@ -1,6 +1,8 @@
 import {
   AntiCaptchaSolver,
   NullCaptchaSolver,
+  applyJitter,
+  nextRunAfterExpiry,
   computeNextRun,
   createLogger,
   jitterSeconds,
@@ -31,6 +33,8 @@ import {
   getAccountSecret,
   getLoginSession,
   getNotificationTarget,
+  recordClaimEvents,
+  updateAccountFacts,
   hasActiveJobForAccount,
   listDueSchedules,
   markRequiresHumanAction,
@@ -132,6 +136,26 @@ export async function main(): Promise<void> {
       await recordConnectorRun(db, { serviceId, connectorVersion: version, success, outcome });
       await evaluateConnectorHealth(db, serviceId);
     },
+    recordInsights: async ({ jobId, connectedAccountId, serviceId, claimedItems, accountFacts }) => {
+      if (claimedItems?.length) {
+        await recordClaimEvents(
+          db,
+          claimedItems.map((item) => ({
+            connectedAccountId,
+            serviceId,
+            jobId,
+            kind: item.kind,
+            title: item.title,
+          })),
+        );
+      }
+      if (accountFacts) {
+        await updateAccountFacts(db, connectedAccountId, {
+          displayName: accountFacts.username,
+          facts: accountFacts.entitlements ? { entitlements: accountFacts.entitlements } : undefined,
+        });
+      }
+    },
     notify: async (message) => {
       const target = await getNotificationTarget(db);
       if (!target) return;
@@ -190,7 +214,24 @@ export async function main(): Promise<void> {
       return true;
     },
     advance: async (s: ScheduleRow, now: Date) => {
-      const next = computeNextRun(s.frequency, s.hour, s.minute, s.dayOfWeek, now);
+      // Randomize the next run within the account's configured window so automatic claims don't
+      // fire at an identical time every day (an obvious automation signal).
+      let next: Date;
+      if (s.frequency === "on_expiry") {
+        // Benefit-driven: re-read the entitlement the run just refreshed and aim at its new end
+        // date. Unknown (nothing observed yet) → look again tomorrow.
+        const account = await getAccount(db, s.connectedAccountId);
+        const endsAt = account?.facts.entitlements?.find((e) => e.endsAt)?.endsAt;
+        const parsed = endsAt ? Date.parse(endsAt) : NaN;
+        next = Number.isFinite(parsed)
+          ? nextRunAfterExpiry(new Date(parsed), s.jitterMinutes ?? 0)
+          : new Date(now.getTime() + 86_400_000);
+      } else {
+        next = applyJitter(
+          computeNextRun(s.frequency, s.hour, s.minute, s.dayOfWeek, now),
+          s.jitterMinutes ?? 0,
+        );
+      }
       await markScheduleRan(db, s.id, now, next);
     },
   };

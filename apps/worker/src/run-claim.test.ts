@@ -38,6 +38,7 @@ function makeDeps(overrides: {
     pauseForHumanAction: [],
     markNeedsReauth: [],
     recordRun: [],
+    recordInsights: [],
     notify: [],
   };
   const connector: Connector = {
@@ -58,6 +59,7 @@ function makeDeps(overrides: {
     pauseForHumanAction: async (id, summary) => void calls.pauseForHumanAction!.push([id, summary]),
     markNeedsReauth: async (id) => void calls.markNeedsReauth!.push(id),
     recordRun: async (s, v, ok, o) => void calls.recordRun!.push([s, v, ok, o]),
+    recordInsights: async (input) => void calls.recordInsights!.push(input),
     notify: async (m) => void calls.notify!.push(m),
     makeContext: makeCtx,
   };
@@ -124,5 +126,77 @@ describe("runClaim orchestration", () => {
     const { deps, calls } = makeDeps({ connector: {}, account: null });
     await runClaim(deps, job);
     expect(calls.finish).toEqual([["j1", "failed", "connected account not found"]]);
+  });
+});
+
+describe("runClaim insights", () => {
+  const job = { jobId: "j1", connectedAccountId: "a1", serviceId: "epic" };
+
+  it("records claimed items and account facts reported by the connector", async () => {
+    const { deps, calls } = makeDeps({
+      connector: {
+        claim: async () => ({
+          outcome: "claimed" as ClaimOutcome,
+          summary: "Claimed: Foretales",
+          claimedItems: [{ kind: "game" as const, title: "Foretales" }],
+          accountFacts: { username: "EmptyProfile" },
+        }),
+      },
+    });
+    await runClaim(deps, job);
+    expect(calls.recordInsights).toHaveLength(1);
+    expect(calls.recordInsights![0]).toMatchObject({
+      jobId: "j1",
+      connectedAccountId: "a1",
+      serviceId: "epic",
+      claimedItems: [{ kind: "game", title: "Foretales" }],
+      accountFacts: { username: "EmptyProfile" },
+    });
+  });
+
+  it("still records account facts when nothing was claimed", async () => {
+    const { deps, calls } = makeDeps({
+      connector: {
+        claim: async () => ({
+          outcome: "nothing_to_claim" as ClaimOutcome,
+          summary: "already owned",
+          accountFacts: {
+            username: "EmptyProfile",
+            entitlements: [{ kind: "prime_sub" as const, channel: "somechannel", endsAt: "2026-08-25T00:00:00.000Z" }],
+          },
+        }),
+      },
+    });
+    await runClaim(deps, job);
+    expect(calls.recordInsights).toHaveLength(1);
+    expect(calls.recordInsights![0]).toMatchObject({
+      accountFacts: { entitlements: [{ kind: "prime_sub", channel: "somechannel" }] },
+    });
+  });
+
+  it("does not call recordInsights when the connector reports nothing", async () => {
+    const { deps, calls } = makeDeps({
+      connector: { claim: async () => ({ outcome: "nothing_to_claim" as ClaimOutcome, summary: "" }) },
+    });
+    await runClaim(deps, job);
+    expect(calls.recordInsights).toHaveLength(0);
+  });
+
+  it("never fails the job if recording insights throws", async () => {
+    const { deps, calls } = makeDeps({
+      connector: {
+        claim: async () => ({
+          outcome: "claimed" as ClaimOutcome,
+          summary: "Claimed: X",
+          claimedItems: [{ kind: "game" as const, title: "X" }],
+        }),
+      },
+    });
+    deps.recordInsights = async () => {
+      throw new Error("db down");
+    };
+    await runClaim(deps, job);
+    // The job still reaches its terminal outcome.
+    expect(calls.finish!.length).toBe(1);
   });
 });

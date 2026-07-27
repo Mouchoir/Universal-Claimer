@@ -1,0 +1,165 @@
+import { describe, expect, it, vi } from "vitest";
+import { NullCaptchaSolver, createLogger, type CaptchaSolver } from "@uc/core";
+import { PrimeGamingConnector } from "../src/primegaming/index.js";
+import { absoluteOfferUrl, cleanOfferTitle, type PrimeGamingPageDriver } from "../src/primegaming/driver.js";
+import { defaultFingerprint } from "../src/fingerprint.js";
+import type { AuthInput, ConnectorContext, JobEvent, SessionHandle } from "../src/connector.js";
+
+const fakeSession = { context: {} } as unknown as SessionHandle;
+const fp = defaultFingerprint();
+const sessionInput: AuthInput = { method: "session_import", cookies: [] };
+
+function makeCtx(overrides: Partial<ConnectorContext> = {}): {
+  ctx: ConnectorContext;
+  events: JobEvent[];
+} {
+  const events: JobEvent[] = [];
+  const ctx: ConnectorContext = {
+    browser: { launch: async () => fakeSession, close: async () => {} },
+    captcha: new NullCaptchaSolver(),
+    totp: () => "123456",
+    emit: (e) => events.push(e),
+    log: createLogger({ sink: () => {} }),
+    ...overrides,
+  };
+  return { ctx, events };
+}
+
+function fakeDriver(over: Partial<PrimeGamingPageDriver> = {}): PrimeGamingPageDriver {
+  return {
+    applyCookies: async () => {},
+    isAuthenticated: async () => true,
+    listClaimableGames: async () => [],
+    claimGame: async () => ({ claimed: true }),
+    getUsername: async () => "EmptyProfile",
+    getCookies: async () => [],
+    goto: async () => {},
+    ...over,
+  };
+}
+
+const offer = { title: "Still There", url: "https://gaming.amazon.com/claims/still-there-gog/dp/x" };
+
+describe("cleanOfferTitle", () => {
+  it("prefers the card heading when present", () => {
+    expect(cleanOfferTitle("Still There", "Still ThereClaim game")).toBe("Still There");
+  });
+
+  it("strips the trailing CTA when there is no heading", () => {
+    expect(cleanOfferTitle("", "Still ThereClaim game")).toBe("Still There");
+    expect(cleanOfferTitle("", "CyClonesObtenir le jeu")).toBe("CyClones");
+  });
+
+  it("returns an empty string for an empty card", () => {
+    expect(cleanOfferTitle("", "")).toBe("");
+  });
+});
+
+describe("absoluteOfferUrl", () => {
+  it("keeps absolute URLs untouched", () => {
+    expect(absoluteOfferUrl("https://gaming.amazon.com/x")).toBe("https://gaming.amazon.com/x");
+  });
+
+  it("resolves relative hrefs against the serving origin", () => {
+    expect(absoluteOfferUrl("/claims/a/dp/b", "https://luna.amazon.com")).toBe(
+      "https://luna.amazon.com/claims/a/dp/b",
+    );
+  });
+
+  it("returns an empty string for a missing href", () => {
+    expect(absoluteOfferUrl("")).toBe("");
+  });
+});
+
+describe("PrimeGamingConnector.claim", () => {
+  it("claims an available offer and reports it as an item", async () => {
+    const c = new PrimeGamingConnector({
+      createDriver: () => fakeDriver({ listClaimableGames: async () => [offer] }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("claimed");
+    expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There" }]);
+    expect(res.accountFacts?.username).toBe("EmptyProfile");
+  });
+
+  it("reports nothing_to_claim when no offer is listed", async () => {
+    const c = new PrimeGamingConnector({ createDriver: () => fakeDriver() });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("nothing_to_claim");
+  });
+
+  it("treats already-owned offers as nothing to claim", async () => {
+    const c = new PrimeGamingConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [offer],
+          claimGame: async () => ({ claimed: false, alreadyOwned: true }),
+        }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("nothing_to_claim");
+    expect(res.summary).toContain("already in your library");
+  });
+
+  it("reports failure — not success — when the claim does not complete", async () => {
+    const c = new PrimeGamingConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [offer],
+          claimGame: async () => ({ claimed: false }),
+        }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("failed");
+  });
+
+  it("returns reauth_needed when the session is not authenticated", async () => {
+    const c = new PrimeGamingConnector({
+      createDriver: () => fakeDriver({ isAuthenticated: async () => false }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("reauth_needed");
+  });
+
+  it("asks for human action when a challenge cannot be solved", async () => {
+    const c = new PrimeGamingConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [offer],
+          claimGame: async () => ({ claimed: false, captcha: true }),
+        }),
+    });
+    const { ctx, events } = makeCtx(); // NullCaptchaSolver → no token
+    const res = await c.claim(sessionInput, fp, {}, ctx);
+    expect(res.outcome).toBe("requires_human_action");
+    expect(events.some((e) => e.type === "requires_human_action")).toBe(true);
+  });
+
+  it("claims several offers in one run", async () => {
+    const second = { title: "CyClones", url: "https://gaming.amazon.com/claims/cyclones/dp/y" };
+    const c = new PrimeGamingConnector({
+      createDriver: () => fakeDriver({ listClaimableGames: async () => [offer, second] }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.claimedItems).toHaveLength(2);
+  });
+
+  it("closes the browser session even after claiming", async () => {
+    const close = vi.fn(async () => {});
+    const c = new PrimeGamingConnector({ createDriver: () => fakeDriver() });
+    await c.claim(sessionInput, fp, {}, makeCtx({
+      browser: { launch: async () => fakeSession, close },
+    }).ctx);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("directs password logins to session import", async () => {
+    const c = new PrimeGamingConnector({ createDriver: () => fakeDriver() });
+    const res = await c.authenticate(
+      { method: "credential_totp", email: "a@b.c", password: "x" },
+      makeCtx().ctx,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("session import");
+  });
+});

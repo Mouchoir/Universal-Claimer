@@ -27,6 +27,8 @@ export interface EpicPageDriver {
     game: FreeGame,
     captchaToken?: string,
   ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }>;
+  /** The account's own display name on the service, if it can be read. */
+  getUsername(): Promise<string | undefined>;
   /** Read the current cookies from the browser context (assisted login). */
   getCookies(): Promise<BrowserCookie[]>;
   /** Navigate the session to a URL (assisted login opens the login page). */
@@ -252,6 +254,33 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
       await page.waitForTimeout(300).catch(() => undefined);
     }
     return undefined;
+  }
+
+  /**
+   * Read the signed-in account's display name. Epic exposes it on the account page in a
+   * `data-component`-tagged field; falls back to the EPIC_SSO display-name cookie. Best-effort:
+   * a missing name never fails a claim.
+   */
+  async getUsername(): Promise<string | undefined> {
+    const page = await this.page();
+    try {
+      await page.goto(PlaywrightEpicDriver.english(ACCOUNT_URL), { waitUntil: "domcontentloaded" });
+      const name = await page
+        .locator("input#displayName, [data-component='AccountDisplayName']")
+        .first()
+        .inputValue()
+        .catch(async () =>
+          page
+            .locator("[data-component='AccountDisplayName']")
+            .first()
+            .textContent()
+            .catch(() => null),
+        );
+      const trimmed = (name ?? "").trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async getCookies(): Promise<BrowserCookie[]> {
