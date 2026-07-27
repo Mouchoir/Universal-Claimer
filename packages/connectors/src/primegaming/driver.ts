@@ -16,6 +16,8 @@ export interface PrimeGamingPageDriver {
   /** Claim one offer. */
   claimGame(offer: PrimeOffer): Promise<{ claimed: boolean; alreadyOwned?: boolean; captcha?: boolean }>;
   getUsername(): Promise<string | undefined>;
+  /** Host Prime Gaming served for this region (it routes by marketplace). */
+  servedHost(): Promise<string>;
   getCookies(): Promise<BrowserCookie[]>;
   goto(url: string): Promise<void>;
 }
@@ -93,14 +95,35 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
   }
 
   /**
-   * Checking the auth cookie rather than page text keeps this independent of the account's
-   * language — and of its marketplace, which matters just as much: a French account signs in on
-   * amazon.fr / luna.amazon.fr, a German one on amazon.de, and so on. All cookies are inspected
-   * (not a fixed URL list) and matched by name pattern.
+   * Ask the page it will actually claim on, rather than inferring from cookies.
+   *
+   * Cookie sniffing gave false positives: Amazon signs you in per marketplace, and Prime Gaming
+   * routes by region — an account holding a valid `at-main` on amazon.com still lands signed-out
+   * on luna.amazon.fr. The claim then failed with no useful explanation. A signed-out page
+   * exposes `data-a-target="sign-in-button"`; that attribute is English whatever the display
+   * language, so this stays locale-independent while being true to what the claim will face.
    */
   async isAuthenticated(): Promise<boolean> {
-    const cookies = await this.context.cookies();
-    return cookies.some((c) => isAmazonAuthCookie(c.name, c.domain) && Boolean(c.value));
+    const page = await this.page();
+    if (!/amazon\./i.test(page.url())) {
+      await page.goto(HOME_URL, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(4000).catch(() => undefined);
+    }
+    const signedOut = await page
+      .locator("[data-a-target='sign-in-button']")
+      .count()
+      .catch(() => 0);
+    return signedOut === 0;
+  }
+
+  /** The host Prime Gaming actually served (it routes by region), for a precise error message. */
+  async servedHost(): Promise<string> {
+    const page = await this.page();
+    try {
+      return new URL(page.url()).host;
+    } catch {
+      return "gaming.amazon.com";
+    }
   }
 
   async listClaimableGames(): Promise<PrimeOffer[]> {
@@ -163,10 +186,13 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
     return still ? { claimed: false } : { claimed: true };
   }
 
-  /** The offer page's claim control, by attribute first and visible label only as a fallback. */
+  /**
+   * The offer page's claim control. `buy-box_call-to-action` is the real one; `FGWPOffer` is
+   * deliberately NOT used here — on an offer page those belong to the "more offers" carousel at
+   * the bottom, so matching them navigated to a different game instead of claiming this one.
+   */
   private async claimButton(page: Page) {
     for (const sel of [
-      "[data-a-target='FGWPOffer']",
       "[data-a-target='buy-box_call-to-action']",
       "[data-a-target='cta-button']",
     ]) {

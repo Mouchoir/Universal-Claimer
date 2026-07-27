@@ -23,6 +23,19 @@ locale.
 Amazon's GraphQL endpoint is **not** used: it answers `403` to anything outside its own persisted
 query set, so hand-written queries are not a viable path.
 
+## Marketplaces (read this if it says you are not signed in)
+
+Amazon signs you in **per marketplace**, and Prime Gaming **routes by region**. Those two facts
+combine badly: an account with a perfectly valid session on `amazon.com` gets served
+`luna.amazon.fr` from France and arrives there signed out. The offers still list (they are
+public), but nothing can be claimed.
+
+So sign in on the host Prime Gaming actually serves you — the connector names it in the failure
+message — and export the session from there. The exporter covers every Amazon marketplace, and a
+cookie lookup on the registrable domain also picks up `luna.`/`gaming.` subdomains.
+
+Authentication is checked on the page itself (`data-a-target="sign-in-button"`), not by sniffing
+cookie names: the cookie check reported success on a session that could not claim anything.
 ## How claiming works
 
 For each claimable offer the connector opens the offer page, clicks the claim control (located by
@@ -37,9 +50,10 @@ that doesn't complete is reported as `failed`, never as a phantom success.
 ## Status
 
 - Offer detection is **validated live** (16 real offers listed with correct titles and URLs).
-- The claim + verification path is **not yet validated against a connected Amazon account**; the
-  claim affordance only renders for a signed-in Prime member. Expect to tune the selectors in
-  `claimButton()` on the first live run.
+- The claim CTA on an offer page is `buy-box_call-to-action`. `FGWPOffer` is deliberately not
+  used there: on an offer page those belong to the "more offers" carousel, so matching them
+  clicked through to a different game instead of claiming (found on the first live run).
+- End-to-end claiming still needs a session signed in on the served marketplace.
 
 ## Terms of service
 
