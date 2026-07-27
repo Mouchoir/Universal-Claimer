@@ -34,7 +34,7 @@ describe("parseFreeGamesResponse", () => {
       }),
     ]);
     expect(parseFreeGamesResponse(json, NOW)).toEqual([
-      { title: "Foretales", url: "https://store.epicgames.com/p/foretales-d6c5bd" },
+      { title: "Foretales", url: "https://store.epicgames.com/en-US/p/foretales-d6c5bd" },
     ]);
   });
 
@@ -73,8 +73,8 @@ describe("parseFreeGamesResponse", () => {
       element({ title: "Via productSlug", offerMappings: null, catalogNs: null, productSlug: "prod-slug", promotions: activeFreeOffer }),
     ]);
     expect(parseFreeGamesResponse(json, NOW)).toEqual([
-      { title: "Via ns", url: "https://store.epicgames.com/p/ns-slug" },
-      { title: "Via productSlug", url: "https://store.epicgames.com/p/prod-slug" },
+      { title: "Via ns", url: "https://store.epicgames.com/en-US/p/ns-slug" },
+      { title: "Via productSlug", url: "https://store.epicgames.com/en-US/p/prod-slug" },
     ]);
   });
 

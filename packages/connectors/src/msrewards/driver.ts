@@ -65,15 +65,18 @@ export class PlaywrightMsRewardsDriver implements MsRewardsPageDriver {
     totp?: string,
   ): Promise<{ authenticated: boolean; captcha?: boolean }> {
     const page = await this.page();
+    // Microsoft's sign-in renders in the account/browser language, so drive it by stable input
+    // ids and submit buttons instead of visible labels ("Next"/"Sign in" differ per locale).
+    // This keeps the connector working for users in any language.
     await page.goto("https://login.live.com/", { waitUntil: "domcontentloaded" });
     await page.fill("input[type='email']", email).catch(() => undefined);
-    await page.getByRole("button", { name: /next/i }).click().catch(() => undefined);
+    await page.click("input[type='submit'], #idSIButton9").catch(() => undefined);
     await page.fill("input[type='password']", password).catch(() => undefined);
-    await page.getByRole("button", { name: /sign in/i }).click().catch(() => undefined);
+    await page.click("input[type='submit'], #idSIButton9").catch(() => undefined);
     if (await this.detectCaptcha(page)) return { authenticated: false, captcha: true };
     if (totp) {
       await page.fill("input[name='otc']", totp).catch(() => undefined);
-      await page.getByRole("button", { name: /verify|submit/i }).click().catch(() => undefined);
+      await page.click("input[type='submit'], #idSubmit_SAOTCC_Continue").catch(() => undefined);
     }
     return { authenticated: await this.isAuthenticated() };
   }

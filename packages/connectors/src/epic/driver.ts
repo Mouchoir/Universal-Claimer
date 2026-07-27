@@ -41,7 +41,10 @@ const ACCOUNT_URL = "https://www.epicgames.com/account/personal";
 // broke when the logged-in store rendered in the account's locale). Same feed the reference
 // project epicgames-freegames-node relies on.
 const PROMOTIONS_URL = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions";
-const STORE_PRODUCT_BASE = "https://store.epicgames.com/p/";
+// Force the en-US store locale (the `/en-US/` path segment) so the checkout UI renders in English
+// for *every* account regardless of its language preference. That lets the selectors below stay
+// language-agnostic — the connector works for users worldwide, not only English/French ones.
+const STORE_PRODUCT_BASE = "https://store.epicgames.com/en-US/p/";
 
 /** Shape of the fields we read from the promotions feed (everything else is ignored). */
 interface PromoElement {
@@ -188,6 +191,8 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     // The free-checkout opens in a store.epicgames.com/purchase iframe whose confirm button is
     // "Add to library" (paid titles say "Place Order"). An *invisible* hCaptcha runs on submit
     // and passes automatically for a genuine session. Click confirm (+ any EULA) in that frame.
+    // The English labels are reliable because the store locale is pinned to en-US above; the
+    // extra localized alternatives are a harmless fallback if Epic ever ignores that pin.
     const purchase = await this.waitForFrame(page, /\/purchase/, 12_000);
     if (purchase) {
       const confirm = purchase
@@ -211,10 +216,24 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     return { claimed: false };
   }
 
+  /**
+   * Force the English store UI regardless of the account's language preference, so the label
+   * checks below work for every user. `lang=en-US` is what the /en-US/ path resolves to.
+   */
+  private static english(url: string): string {
+    try {
+      const u = new URL(url);
+      u.searchParams.set("lang", "en-US");
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+
   /** Load the product page and decide whether the account already owns it (CTA is "In Library"). */
   private async isOwned(url: string): Promise<boolean> {
     const page = await this.page();
-    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.goto(PlaywrightEpicDriver.english(url), { waitUntil: "domcontentloaded" });
     await page
       .waitForSelector("[data-testid='purchase-cta-button']", { timeout: 12_000 })
       .catch(() => undefined);
