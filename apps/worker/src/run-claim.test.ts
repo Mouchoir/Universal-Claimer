@@ -39,6 +39,7 @@ function makeDeps(overrides: {
     markNeedsReauth: [],
     recordRun: [],
     recordInsights: [],
+    persistRefreshedSession: [],
     notify: [],
   };
   const connector: Connector = {
@@ -60,8 +61,13 @@ function makeDeps(overrides: {
     markNeedsReauth: async (id) => void calls.markNeedsReauth!.push(id),
     recordRun: async (s, v, ok, o) => void calls.recordRun!.push([s, v, ok, o]),
     recordInsights: async (input) => void calls.recordInsights!.push(input),
+    persistRefreshedSession: async (id, cookies) => void calls.persistRefreshedSession!.push([id, cookies]),
     notify: async (m) => void calls.notify!.push(m),
-    makeContext: makeCtx,
+    // Mirrors the production wiring: hooks passed by runClaim land on the connector context.
+    makeContext: (_proxy, hooks) => ({
+      ...makeCtx(),
+      ...(hooks ? { persistRefreshedSession: hooks.persistRefreshedSession } : {}),
+    }),
   };
   return { deps, calls };
 }
@@ -198,5 +204,55 @@ describe("runClaim insights", () => {
     await runClaim(deps, job);
     // The job still reaches its terminal outcome.
     expect(calls.finish!.length).toBe(1);
+  });
+});
+
+describe("runClaim session refresh", () => {
+  const job = { jobId: "j1", connectedAccountId: "a1", serviceId: "epic" };
+
+  it("gives the connector a hook bound to this account", async () => {
+    let received: unknown = null;
+    const { deps, calls } = makeDeps({
+      connector: {
+        claim: async (_i, _f, _c, ctx) => {
+          // A connector persists the cookies the service refreshed during the run.
+          await ctx.persistRefreshedSession?.([
+            { name: "EPIC_SSO", value: "fresh", domain: ".epicgames.com", path: "/" },
+          ]);
+          received = ctx.persistRefreshedSession ? "present" : "absent";
+          return { outcome: "nothing_to_claim" as ClaimOutcome, summary: "" };
+        },
+      },
+    });
+    await runClaim(deps, job);
+    expect(received).toBe("present");
+    expect(calls.persistRefreshedSession).toHaveLength(1);
+    const [accountId, cookies] = calls.persistRefreshedSession![0] as [string, unknown[]];
+    expect(accountId).toBe("a1"); // bound to the account being claimed
+    expect(cookies).toHaveLength(1);
+  });
+
+  it("does not persist anything when the connector never calls the hook", async () => {
+    const { deps, calls } = makeDeps({
+      connector: { claim: async () => ({ outcome: "nothing_to_claim" as ClaimOutcome, summary: "" }) },
+    });
+    await runClaim(deps, job);
+    expect(calls.persistRefreshedSession).toHaveLength(0);
+  });
+
+  it("still finishes the job when refreshing the session fails", async () => {
+    const { deps, calls } = makeDeps({
+      connector: {
+        claim: async (_i, _f, _c, ctx) => {
+          await ctx.persistRefreshedSession?.([]).catch(() => undefined);
+          return { outcome: "claimed" as ClaimOutcome, summary: "ok" };
+        },
+      },
+    });
+    deps.persistRefreshedSession = async () => {
+      throw new Error("db down");
+    };
+    await runClaim(deps, job);
+    expect(calls.finish).toHaveLength(1);
   });
 });

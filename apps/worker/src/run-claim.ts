@@ -37,6 +37,11 @@ export interface LoadedAccount {
  * Dependencies for a claim run, injected so the orchestration is unit-testable with fakes
  * (no DB, no browser). Production wiring lives in index.ts.
  */
+/** Per-run callbacks the worker injects into the connector context. */
+export interface ConnectorHooks {
+  persistRefreshedSession(cookies: BrowserCookie[]): Promise<void>;
+}
+
 export interface ClaimJobDeps {
   getConnector(serviceId: string): Connector;
   loadAccount(connectedAccountId: string): Promise<LoadedAccount | null>;
@@ -60,7 +65,12 @@ export interface ClaimJobDeps {
   /** Best-effort operator notification (portal SSE + optional webhook). */
   notify(message: string): Promise<void>;
   /** Build a connector context whose browser uses the given per-account proxy (if any). */
-  makeContext(proxy?: string): ConnectorContext;
+  makeContext(proxy?: string, hooks?: ConnectorHooks): ConnectorContext;
+  /**
+   * Persist session cookies a connector refreshed during a run, so a stored session does not
+   * expire while the operator's own browser stays signed in.
+   */
+  persistRefreshedSession(connectedAccountId: string, cookies: BrowserCookie[]): Promise<void>;
 }
 
 function toAuthInput(method: LoadedAccount["method"], secretJson: string): AuthInput {
@@ -92,7 +102,10 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
 
   const connector = deps.getConnector(account.serviceId);
   const input = toAuthInput(account.method, account.secretJson);
-  const ctx = deps.makeContext(account.proxy);
+  // Let the connector hand back refreshed cookies for this account (see ConnectorContext).
+  const ctx = deps.makeContext(account.proxy, {
+    persistRefreshedSession: (cookies) => deps.persistRefreshedSession(job.connectedAccountId, cookies),
+  });
 
   let result: {
     outcome: ClaimOutcome;

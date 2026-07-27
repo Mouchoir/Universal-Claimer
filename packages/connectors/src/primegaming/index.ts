@@ -69,8 +69,9 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
     ctx: ConnectorContext,
   ): Promise<ClaimResult> {
     const session = await ctx.browser.launch(fingerprint);
+    const driver = this.createDriver(session);
+    let authenticated = false;
     try {
-      const driver = this.createDriver(session);
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
 
       if (!(await driver.isAuthenticated())) {
@@ -79,6 +80,7 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
           summary: "Amazon session is no longer authenticated; reconnect the account.",
         };
       }
+      authenticated = true;
 
       // Read the account name while the session is open — free, and the dashboard shows it.
       const accountFacts = { username: await driver.getUsername() };
@@ -140,6 +142,11 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
         accountFacts,
       };
     } finally {
+      // Hand back the tokens the service refreshed during this run so the stored session does
+      // not silently expire (see ConnectorContext.persistRefreshedSession).
+      if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
+        await ctx.persistRefreshedSession(await driver.getCookies()).catch(() => undefined);
+      }
       await ctx.browser.close(session);
     }
   }
