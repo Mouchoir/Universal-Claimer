@@ -11,6 +11,7 @@ import {
 import {
   createAccount,
   getAccountByService,
+  reenableConnector,
   replaceAccountSecret,
   getLoginSession,
   setLoginStatus,
@@ -105,6 +106,8 @@ export function makeLoginDeps(args: {
       const existing = await getAccountByService(db, job.serviceId);
       if (existing) await replaceAccountSecret(db, existing.id, values);
       else await createAccount(db, { serviceId: job.serviceId, ...values });
+      // A fresh session is exactly what an auto-disabled connector was waiting for.
+      await reenableConnector(db, job.serviceId);
     },
     setStatus: async (sessionId, status) => setLoginStatus(db, sessionId, status),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

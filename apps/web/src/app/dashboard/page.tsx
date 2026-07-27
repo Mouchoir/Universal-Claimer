@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getAccountByService, hasConsent, isConnectorDisabled, listServices } from "@uc/db";
+import { connectorDisabledReason, getAccountByService, hasConsent, listServices } from "@uc/db";
 import { getDb } from "@/server/context";
 import { isAuthenticated } from "@/server/session-cookie";
 import { ClaimPanel } from "./ClaimPanel";
+import { EnableConnector } from "./EnableConnector";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export default async function DashboardPage() {
         // A connected account whose session expired must not read as healthy.
         needsReauth: account?.status === "needs_reauth",
         consented: await hasConsent(db, s.id),
-        disabled: await isConnectorDisabled(db, s.id),
+        disabledReason: await connectorDisabledReason(db, s.id),
       };
     }),
   );
@@ -42,8 +43,9 @@ export default async function DashboardPage() {
             <div
               key={s.id}
               className="uc-card"
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              style={{ display: "grid", gap: 4 }}
             >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <strong>{s.displayName}</strong>
                 <div style={{ color: "var(--uc-text-muted)", fontSize: 14 }}>
@@ -52,8 +54,8 @@ export default async function DashboardPage() {
                     : s.connected
                       ? "Connected"
                       : "Not connected"}
-                  {s.disabled && (
-                    <span className="uc-warning"> · connector auto-disabled (repeated failures)</span>
+                  {s.disabledReason && (
+                    <span className="uc-warning"> · automatic runs paused</span>
                   )}
                 </div>
               </div>
@@ -63,6 +65,10 @@ export default async function DashboardPage() {
                 <span style={{ color: "var(--uc-success)" }}>✓</span>
               ) : (
                 <Link href={`/connect/${s.id}`}>Connect</Link>
+              )}
+              </div>
+              {s.disabledReason && (
+                <EnableConnector serviceId={s.id} reason={s.disabledReason} />
               )}
             </div>
           ))}
