@@ -124,6 +124,21 @@ export interface ConnectorContext {
   totp(seed: string): string;
   emit(event: JobEvent): void;
   log: Logger;
+  /**
+   * Hand back the session cookies as they stand at the end of an authenticated run, so the stored
+   * secret can be refreshed.
+   *
+   * Services hand out short-lived auth tokens (Epic's expire in ~2 days) and renew them silently
+   * on each visit. A stored snapshot never gets renewed, so it dies while the operator's own
+   * browser stays signed in — which is exactly the "why do I have to reconnect?" problem. Since a
+   * claim already drives a real browser through the site, the refreshed cookies are right there;
+   * persisting them keeps the session alive indefinitely as long as runs happen more often than
+   * the token lifetime.
+   *
+   * Cookies are secret: they are passed here (never returned in a ClaimResult, which is logged
+   * and summarized) and the runtime seals them before storage. Optional — absent in tests.
+   */
+  persistRefreshedSession?(cookies: BrowserCookie[]): Promise<void>;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   loadConfig,
   loadMasterKey,
   openSecretString,
+  sealSecret,
   type CaptchaSolver,
 } from "@uc/core";
 import {
@@ -34,6 +35,7 @@ import {
   getLoginSession,
   getNotificationTarget,
   recordClaimEvents,
+  refreshAccountSecret,
   updateAccountFacts,
   hasActiveJobForAccount,
   listDueSchedules,
@@ -49,7 +51,7 @@ import {
 } from "@uc/db";
 import { deliver, type NotificationKind } from "@uc/notifications";
 import { reconcileInterruptedJobs } from "./reconcile.js";
-import { runClaim, type ClaimJobDeps, type LoadedAccount } from "./run-claim.js";
+import { runClaim, type ClaimJobDeps, type ConnectorHooks, type LoadedAccount } from "./run-claim.js";
 import { runLogin } from "./run-login.js";
 import { makeLoginDeps } from "./login.js";
 import { runScheduler, type SchedulerDeps } from "./run-scheduler.js";
@@ -82,7 +84,7 @@ export async function main(): Promise<void> {
       ...(proxy ? { proxy } : {}),
     });
 
-  const makeContext = (proxy?: string): ConnectorContext => ({
+  const makeContext = (proxy?: string, hooks?: ConnectorHooks): ConnectorContext => ({
     browser: makeBrowser(proxy),
     captcha,
     totp: generateTotp,
@@ -90,6 +92,7 @@ export async function main(): Promise<void> {
       log.info("connector event", { event: event.type });
     },
     log,
+    ...(hooks ? { persistRefreshedSession: hooks.persistRefreshedSession } : {}),
   });
 
   const openProxy = (
@@ -166,6 +169,13 @@ export async function main(): Promise<void> {
         ),
       ).url as string;
       await deliver({ kind: target.kind as NotificationKind, url }, message);
+    },
+    persistRefreshedSession: async (connectedAccountId, cookies) => {
+      // Re-seal with the same envelope encryption as the original secret; cookies never
+      // touch storage or logs in the clear.
+      const sealed = sealSecret(JSON.stringify({ cookies }), masterKey);
+      await refreshAccountSecret(db, connectedAccountId, sealed.ciphertext, sealed.wrappedDataKey);
+      log.info("refreshed stored session", { account: connectedAccountId, count: cookies.length });
     },
     makeContext,
   };

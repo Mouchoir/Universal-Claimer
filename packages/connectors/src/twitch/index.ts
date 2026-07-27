@@ -83,8 +83,9 @@ export class TwitchConnector implements Connector, InteractiveLogin {
     }
 
     const session = await ctx.browser.launch(fingerprint);
+    const driver = this.createDriver(session);
+    let authenticated = false;
     try {
-      const driver = this.createDriver(session);
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
       else {
         const totp = input.totpSeed ? ctx.totp(input.totpSeed) : undefined;
@@ -94,6 +95,7 @@ export class TwitchConnector implements Connector, InteractiveLogin {
       if (!(await driver.isAuthenticated())) {
         return { outcome: "reauth_needed", summary: "Twitch session expired; reconnect the account." };
       }
+      authenticated = true;
 
       let res = await driver.resubWithPrime(channel);
       if (res.captcha) {
@@ -158,6 +160,11 @@ export class TwitchConnector implements Connector, InteractiveLogin {
         accountFacts,
       };
     } finally {
+      // Hand back the tokens the service refreshed during this run so the stored session does
+      // not silently expire (see ConnectorContext.persistRefreshedSession).
+      if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
+        await ctx.persistRefreshedSession(await driver.getCookies()).catch(() => undefined);
+      }
       await ctx.browser.close(session);
     }
   }

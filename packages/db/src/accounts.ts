@@ -229,3 +229,20 @@ export async function hasConsent(db: Database, serviceId: string): Promise<boole
     .limit(1);
   return row !== undefined;
 }
+
+/**
+ * Replace only the stored secret, leaving method/fingerprint/status/config untouched. Used to
+ * refresh a still-valid session with the tokens the service renewed during a run — a maintenance
+ * update, not a reconnection.
+ */
+export async function refreshAccountSecret(
+  db: Database,
+  id: string,
+  secretCiphertext: Buffer,
+  secretDataKey: Buffer,
+): Promise<void> {
+  await db
+    .update(connectedAccount)
+    .set({ secretCiphertext, secretDataKey, updatedAt: new Date() })
+    .where(eq(connectedAccount.id, id));
+}
