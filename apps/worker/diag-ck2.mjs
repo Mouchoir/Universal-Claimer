@@ -1,0 +1,15 @@
+import { loadMasterKey, openSecretString } from "@uc/core";
+import { createDb, getAccountByService, getAccountSecret } from "@uc/db";
+import { readFileSync } from "node:fs";
+const KEY = readFileSync("J:/Development/repos/universal-claimer/.e2e-key", "utf8").trim();
+const masterKey = loadMasterKey(KEY);
+const { db } = createDb("postgres://uc:uc@localhost:5434/uc");
+const acct = await getAccountByService(db, "primegaming");
+const row = await getAccountSecret(db, acct.id);
+const { cookies } = JSON.parse(openSecretString({ ciphertext: row.secretCiphertext, wrappedDataKey: row.secretDataKey }, masterKey));
+const byDomain = {};
+for (const c of cookies) (byDomain[c.domain] ??= []).push(c.name);
+for (const [d, names] of Object.entries(byDomain).sort()) console.log(`${d.padEnd(24)} ${names.join(", ")}`);
+console.log("\ntotal:", cookies.length);
+console.log("FR auth cookies:", cookies.filter(c => /amazon\.fr/.test(c.domain) && /^(sess-)?at-/i.test(c.name)).map(c=>`${c.name}@${c.domain}`).join(" ") || "NONE");
+process.exit(0);
