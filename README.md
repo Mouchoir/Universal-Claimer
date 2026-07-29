@@ -91,3 +91,11 @@ of how these sites actually behave.
 Thanks also to the people who documented Twitch's and Amazon's internal GraphQL endpoints in the
 open. Reading a site's own API beats guessing at its markup, and it is the reason the connectors
 work in any display language rather than only in English.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
+
+Automating claims may violate the terms of service of the platforms involved and could get your
+accounts suspended. You run this on your own accounts, at your own risk; the instance warns you
+and records your consent per service before it touches anything.
