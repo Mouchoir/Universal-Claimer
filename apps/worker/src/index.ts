@@ -143,13 +143,22 @@ export async function main(): Promise<void> {
       if (claimedItems?.length) {
         await recordClaimEvents(
           db,
-          claimedItems.map((item) => ({
-            connectedAccountId,
-            serviceId,
-            jobId,
-            kind: item.kind,
-            title: item.title,
-          })),
+          claimedItems.map((item) => {
+            // The redemption key is a secret: seal it with the same envelope encryption as every
+            // other stored secret, and never let it reach a summary or a log.
+            const sealed = item.code ? sealSecret(item.code, masterKey) : null;
+            return {
+              connectedAccountId,
+              serviceId,
+              jobId,
+              kind: item.kind,
+              title: item.title,
+              platform: item.platform ?? null,
+              redeemBy: item.redeemBy ? new Date(item.redeemBy) : null,
+              codeCiphertext: sealed?.ciphertext ?? null,
+              codeDataKey: sealed?.wrappedDataKey ?? null,
+            };
+          }),
         );
       }
       if (accountFacts) {
@@ -214,7 +223,7 @@ export async function main(): Promise<void> {
     enqueueClaim: async (accountId) => {
       const account = await getAccount(db, accountId);
       if (!account) return false;
-      const jobId = await createJob(db, accountId);
+      const jobId = await createJob(db, accountId, "scheduled");
       await boss.send(
         CLAIM_QUEUE,
         { jobId, connectedAccountId: accountId, serviceId: account.serviceId },

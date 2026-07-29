@@ -24,6 +24,7 @@ interface Job {
   id: string;
   serviceId: string;
   state: string;
+  trigger?: string;
   outcome: string | null;
   summary: string | null;
   createdAt: string;
@@ -35,6 +36,12 @@ interface Claim {
   kind: string;
   title: string;
   claimedAt: string;
+  /** Store the key must be redeemed on, when the item is not delivered in place. */
+  platform?: string | null;
+  /** Deadline to redeem it — keys stop working when the offer ends. */
+  redeemBy?: string | null;
+  hasCode?: boolean;
+  redeemedAt?: string | null;
 }
 
 const OUTCOME_COLOR: Record<string, string> = {
@@ -209,6 +216,23 @@ export function ActivityView() {
                 <span>
                   {KIND_LABEL[c.kind] ?? c.kind} <strong>{c.title}</strong>
                   <span style={{ color: "var(--uc-text-muted)" }}> · {c.serviceId}</span>
+                  {c.platform && (
+                    <span style={{ color: "var(--uc-text-muted)" }}> · redeem on {c.platform}</span>
+                  )}
+                  {c.hasCode && !c.redeemedAt && (
+                    <span style={{ color: "var(--uc-warning)" }}> · key to redeem</span>
+                  )}
+                  {c.redeemBy && (() => {
+                    const days = Math.ceil((Date.parse(c.redeemBy) - Date.now()) / 86_400_000);
+                    if (!Number.isFinite(days)) return null;
+                    // Under a week left is worth a warning colour: an unredeemed key expires.
+                    return (
+                      <span style={{ color: days <= 7 ? "var(--uc-warning)" : "var(--uc-text-muted)" }}>
+                        {" "}· by {new Date(c.redeemBy).toLocaleDateString()}
+                        {days >= 0 ? ` (${days}d)` : " (expired)"}
+                      </span>
+                    );
+                  })()}
                 </span>
                 <span style={{ color: "var(--uc-text-muted)", fontSize: 13, whiteSpace: "nowrap" }}>
                   {fmt(c.claimedAt)}
@@ -237,7 +261,7 @@ export function ActivityView() {
                     </span>
                   </span>
                   <span style={{ color: "var(--uc-text-muted)", fontSize: 13, whiteSpace: "nowrap" }}>
-                    {fmt(j.createdAt)}
+                    {j.trigger === "scheduled" ? "auto" : "manual"} · {fmt(j.createdAt)}
                   </span>
                 </div>
                 {j.summary && (

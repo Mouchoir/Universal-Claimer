@@ -59,3 +59,27 @@ that doesn't complete is reported as `failed`, never as a phantom success.
 
 Automating Prime Gaming claims may violate the Amazon Prime Gaming Terms of Service and could
 result in suspension of your Amazon account. You use this at your own risk.
+
+## Where a claimed game has to be redeemed
+
+Prime Gaming does not always drop a game straight into a library. When the store account is
+linked to Amazon the page says so ("Sent to your Epic Games Store library") and there is nothing
+to do. When it is not linked, the offer hands out a **key** that stops working once the offer ends.
+
+The store is derived from the slug suffix Amazon puts on every claim URL —
+`framed-collection-gog`, `lonestar-epic`, `terraforming-mars-aga`,
+`please-touch-the-artwork-legacy` — which lives in the URL rather than the rendered page, so it is
+immune to the display language. An unknown suffix yields no platform rather than a guess.
+
+Claimed items therefore record the platform and, when known, the redeem-by date; the activity page
+shows both and warns when a deadline is within a week.
+
+### A caution about scraping keys
+
+The only `<input>` on a claimed offer page holds a CSRF token, not a game key. Harvesting inputs
+blindly would store tokens as "keys". Key capture is therefore deliberately narrow, and
+`claim_event` keeps the key envelope-encrypted like every other secret, with `hasCode` the only
+thing exposed by the API until the key is explicitly requested.
+
+Not yet validated live: no offer in the test account handed out a key (the Epic and Amazon stores
+were linked, so games were delivered directly). Expect to confirm the capture on an unlinked store.

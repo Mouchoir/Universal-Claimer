@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullCaptchaSolver, createLogger, type CaptchaSolver } from "@uc/core";
 import { PrimeGamingConnector } from "../src/primegaming/index.js";
-import { absoluteOfferUrl, cleanOfferTitle, isAmazonAuthCookie, type PrimeGamingPageDriver } from "../src/primegaming/driver.js";
+import {
+  absoluteOfferUrl,
+  cleanOfferTitle,
+  isAmazonAuthCookie,
+  platformFromOfferUrl,
+  type PrimeGamingPageDriver,
+} from "../src/primegaming/driver.js";
 import { defaultFingerprint } from "../src/fingerprint.js";
 import type { AuthInput, ConnectorContext, JobEvent, SessionHandle } from "../src/connector.js";
 
@@ -79,7 +85,8 @@ describe("PrimeGamingConnector.claim", () => {
     });
     const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
     expect(res.outcome).toBe("claimed");
-    expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There" }]);
+    // The slug suffix (-gog) tells us where the key has to be redeemed.
+    expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There", platform: "GOG" }]);
     expect(res.accountFacts?.username).toBe("EmptyProfile");
   });
 
@@ -212,5 +219,25 @@ describe("PrimeGamingConnector marketplace mismatch", () => {
     expect(res.outcome).toBe("reauth_needed");
     expect(res.summary).toContain("luna.amazon.fr");
     expect(res.summary).toMatch(/sign in/i);
+  });
+});
+
+describe("platformFromOfferUrl", () => {
+  it("derives the store from the slug suffix Amazon puts in every claim URL", () => {
+    const base = "https://luna.amazon.fr/claims/";
+    expect(platformFromOfferUrl(`${base}framed-collection-gog/dp/x`)).toBe("GOG");
+    expect(platformFromOfferUrl(`${base}lonestar-epic/dp/x`)).toBe("Epic Games Store");
+    expect(platformFromOfferUrl(`${base}terraforming-mars-aga/dp/x`)).toBe("Amazon Games App");
+    expect(platformFromOfferUrl(`${base}please-touch-the-artwork-legacy/dp/x`)).toBe("Legacy Games");
+  });
+
+  it("works on the gaming.amazon.com URL shape too", () => {
+    expect(platformFromOfferUrl("https://gaming.amazon.com/space-grunts-2-gog/dp/y")).toBe("GOG");
+  });
+
+  it("returns undefined rather than guessing for an unknown suffix", () => {
+    expect(platformFromOfferUrl("https://luna.amazon.fr/claims/some-game-unknownstore/dp/x")).toBeUndefined();
+    expect(platformFromOfferUrl("https://example.com/nothing")).toBeUndefined();
+    expect(platformFromOfferUrl("")).toBeUndefined();
   });
 });
