@@ -36,6 +36,9 @@ export default function LoginSessionPage() {
   const { id } = useParams<{ id: string }>();
   const [status, setStatus] = useState<string>("pending");
   const [embedRelay, setEmbedRelay] = useState(false);
+  // Name the service in the heading rather than saying "your account": with several services
+  // connected, a generic title leaves you guessing which login this window is for.
+  const [serviceId, setServiceId] = useState("");
   const [capturing, setCapturing] = useState(false);
   const [relayError, setRelayError] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,6 +57,7 @@ export default function LoginSessionPage() {
           if (!alive) return;
           setStatus(data.status);
           setEmbedRelay(Boolean(data.embedRelay));
+          if (data.serviceId) setServiceId(data.serviceId);
           if (data.status === "connected") router.push("/dashboard");
         }
       } catch {
@@ -229,7 +233,7 @@ export default function LoginSessionPage() {
 
   return (
     <main>
-      <h1>Connect your account</h1>
+      <h1>{serviceId ? `Connect your ${serviceId} account` : "Connect your account"}</h1>
       <p className="uc-warning">
         Your instance opens the service&apos;s official login page in a browser it controls. We
         capture only your session (encrypted) — never your password.
