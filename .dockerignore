@@ -2,6 +2,11 @@ node_modules/
 **/node_modules/
 dist/
 **/dist/
+# Incremental build stamps from the host: without these excluded, tsc -b inside the image
+# believes every project is up to date, emits no dist/, and the next package in the graph then
+# fails with "Cannot find module @uc/core".
+*.tsbuildinfo
+**/*.tsbuildinfo
 .next/
 coverage/
 .git/
