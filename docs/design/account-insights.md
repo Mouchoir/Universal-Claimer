@@ -16,7 +16,7 @@ So claims are recorded as **structured rows** instead.
   `kind` (`game` | `prime_sub` | `points`), `title`, `claimed_at`. Backs both the "recently
   claimed" list and the stats.
 - **`connected_account.display_name`** — the account's own username on the service (e.g.
-  `EmptyProfile`), so the dashboard shows *which* account is connected.
+  `ExampleUser`), so the dashboard shows *which* account is connected.
 - **`connected_account.facts`** (jsonb) + `facts_updated_at` — non-secret observations, currently
   `{ entitlements: [{ kind: "prime_sub", channel, endsAt }] }`.
 - **`schedule.jitter_minutes`** — randomization window for automatic runs.

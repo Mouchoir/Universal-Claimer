@@ -63,7 +63,7 @@ export const connectedAccount = pgTable(
     fingerprint: jsonb("fingerprint").notNull(),
     // Non-secret per-account connector config (e.g. { channel } for Twitch). Plain JSON.
     config: jsonb("config").notNull().default({}),
-    // The account's own username on the service, observed during runs (e.g. "EmptyProfile").
+    // The account's own username on the service, observed during runs (e.g. "ExampleUser").
     displayName: text("display_name"),
     // Non-secret facts observed during runs: { entitlements: [{ kind, channel, endsAt }] }.
     // Surfaced in the dashboard (e.g. an active Prime sub and when it ends).

@@ -4,7 +4,7 @@ import { parseSubscriptionBenefits } from "../src/twitch/driver.js";
 /** Shaped like a real SubscriptionsManager_User response (batched array, as Twitch returns it). */
 function response(nodes: unknown[]) {
   return JSON.stringify([
-    { data: { currentUser: { login: "thyiades", subscriptionBenefits: { edges: nodes.map((node) => ({ node })) } } } },
+    { data: { currentUser: { login: "example_user", subscriptionBenefits: { edges: nodes.map((node) => ({ node })) } } } },
   ]);
 }
 
@@ -15,19 +15,19 @@ describe("parseSubscriptionBenefits", () => {
         endsAt: "2026-08-16T21:13:40Z",
         renewsAt: null,
         purchasedWithPrime: true,
-        product: { owner: { login: "emptyprofile" } },
+        product: { owner: { login: "examplechannel" } },
       },
     ]);
     expect(parseSubscriptionBenefits(raw)).toEqual([
-      { channel: "emptyprofile", endsAt: "2026-08-16T21:13:40.000Z", purchasedWithPrime: true },
+      { channel: "examplechannel", endsAt: "2026-08-16T21:13:40.000Z", purchasedWithPrime: true },
     ]);
   });
 
   it("lowercases the channel so matching is case-insensitive", () => {
     const raw = response([
-      { endsAt: "2026-08-16T21:13:40Z", purchasedWithPrime: true, product: { owner: { login: "EmptyProfile" } } },
+      { endsAt: "2026-08-16T21:13:40Z", purchasedWithPrime: true, product: { owner: { login: "MixedCaseChannel" } } },
     ]);
-    expect(parseSubscriptionBenefits(raw)[0]!.channel).toBe("emptyprofile");
+    expect(parseSubscriptionBenefits(raw)[0]!.channel).toBe("mixedcasechannel");
   });
 
   it("keeps subs with no end date (permanent grants) without an endsAt", () => {

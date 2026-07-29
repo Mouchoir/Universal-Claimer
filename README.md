@@ -40,7 +40,7 @@ deploy          # Dockerfiles + docker-compose.yml + .env.example
 ```bash
 git clone https://github.com/Mouchoir/Universal-Claimer.git
 cd Universal-Claimer/deploy
-cp .env.example .env      # set APP_ENCRYPTION_KEY (openssl rand -base64 32) + PORT
+cp .env.example .env      # set APP_ENCRYPTION_KEY + RELAY_TOKEN (see the file), and PORT
 docker compose up -d --build
 ```
 
@@ -58,3 +58,36 @@ corepack pnpm lint        # lint
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Acknowledgements
+
+This project stands on other people's work, and in a couple of places on their hard-won knowledge
+of how these sites actually behave.
+
+- **[CloakBrowser](https://github.com/CloakHQ/CloakBrowser)** — the source-patched Chromium every
+  claim runs in, and a drop-in replacement for `playwright-core`. Without it this project would be
+  a detection lesson rather than an automation one.
+- **[epicgames-freegames-node](https://github.com/claabs/epicgames-freegames-node)** (claabs) —
+  the reference implementation for Epic. Scraping the store page for "Free Now" labels broke as soon
+  as the UI rendered in another language; this project pointed the way to Epic's free-games
+  promotions feed, which is what the Epic connector reads today.
+- **[Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)** (kairi003) —
+  the open-source, local-only cookie exporter that proved the pattern, and the honest alternative
+  if you would rather not run
+  [ours](https://github.com/Mouchoir/universal-claimer-extension). Its Netscape `cookies.txt`
+  output is the format this project's session import accepts.
+- **[Playwright](https://github.com/microsoft/playwright)** — the browser automation API the
+  connectors are written against, and the CDP plumbing the assisted-login relay builds on.
+- **[pg-boss](https://github.com/timgit/pg-boss)** — Postgres-backed job queue, which is why this
+  stack needs no Redis.
+- **[Drizzle ORM](https://github.com/drizzle-team/drizzle-orm)** — schema, typed queries and
+  migrations.
+- **[Next.js](https://github.com/vercel/next.js)** — the web portal.
+- **[otplib](https://github.com/yeojz/otplib)** and
+  **[@node-rs/argon2](https://github.com/napi-rs/node-rs)** — TOTP generation and password hashing.
+- **[spec-kit](https://github.com/github/spec-kit)** (GitHub) — the spec-driven workflow this repo
+  was built with; the `specs/` directory is its output.
+
+Thanks also to the people who documented Twitch's and Amazon's internal GraphQL endpoints in the
+open. Reading a site's own API beats guessing at its markup, and it is the reason the connectors
+work in any display language rather than only in English.

@@ -145,7 +145,7 @@ describe("runClaim insights", () => {
           outcome: "claimed" as ClaimOutcome,
           summary: "Claimed: Foretales",
           claimedItems: [{ kind: "game" as const, title: "Foretales" }],
-          accountFacts: { username: "EmptyProfile" },
+          accountFacts: { username: "ExampleUser" },
         }),
       },
     });
@@ -156,7 +156,7 @@ describe("runClaim insights", () => {
       connectedAccountId: "a1",
       serviceId: "epic",
       claimedItems: [{ kind: "game", title: "Foretales" }],
-      accountFacts: { username: "EmptyProfile" },
+      accountFacts: { username: "ExampleUser" },
     });
   });
 
@@ -167,7 +167,7 @@ describe("runClaim insights", () => {
           outcome: "nothing_to_claim" as ClaimOutcome,
           summary: "already owned",
           accountFacts: {
-            username: "EmptyProfile",
+            username: "ExampleUser",
             entitlements: [{ kind: "prime_sub" as const, channel: "somechannel", endsAt: "2026-08-25T00:00:00.000Z" }],
           },
         }),

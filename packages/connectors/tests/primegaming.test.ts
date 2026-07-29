@@ -37,7 +37,7 @@ function fakeDriver(over: Partial<PrimeGamingPageDriver> = {}): PrimeGamingPageD
     isAuthenticated: async () => true,
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
-    getUsername: async () => "EmptyProfile",
+    getUsername: async () => "ExampleUser",
     servedHost: async () => "gaming.amazon.com",
     getCookies: async () => [],
     goto: async () => {},
@@ -87,7 +87,7 @@ describe("PrimeGamingConnector.claim", () => {
     expect(res.outcome).toBe("claimed");
     // The slug suffix (-gog) tells us where the key has to be redeemed.
     expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There", platform: "GOG" }]);
-    expect(res.accountFacts?.username).toBe("EmptyProfile");
+    expect(res.accountFacts?.username).toBe("ExampleUser");
   });
 
   it("reports nothing_to_claim when no offer is listed", async () => {
