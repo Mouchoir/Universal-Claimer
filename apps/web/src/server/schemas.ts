@@ -28,6 +28,8 @@ export const jobViewSchema = z.object({
   connectedAccountId: z.string(),
   serviceId: z.string(),
   state: z.enum(["queued", "running", "requires_human_action", "succeeded", "failed"]),
+  trigger: z.enum(["manual", "scheduled"]).optional(),
+  createdAt: z.union([z.string(), z.date()]).optional(),
   outcome: z.enum(["claimed", "nothing_to_claim", "failed", "reauth_needed"]).nullable(),
   summary: z.string().nullable(),
 });

@@ -18,6 +18,13 @@ export interface ClaimEventRow {
   kind: ClaimKind;
   title: string;
   claimedAt: Date;
+  /** Store the key must be redeemed on (GOG, Epic Games Store, …), when it is not in-place. */
+  platform: string | null;
+  /** Deadline to redeem; keys stop working when the offer ends. */
+  redeemBy: Date | null;
+  /** True when a redemption key was captured (the key itself is never returned here). */
+  hasCode: boolean;
+  redeemedAt: Date | null;
 }
 
 export interface NewClaimEvent {
@@ -26,6 +33,11 @@ export interface NewClaimEvent {
   jobId?: string | null;
   kind: ClaimKind;
   title: string;
+  platform?: string | null;
+  redeemBy?: Date | null;
+  /** Sealed redemption key (envelope-encrypted by the caller). */
+  codeCiphertext?: Buffer | null;
+  codeDataKey?: Buffer | null;
 }
 
 /** Record the items obtained by one claim. No-op for an empty list. */
@@ -41,6 +53,10 @@ export async function recordClaimEvents(
       jobId: e.jobId ?? null,
       kind: e.kind,
       title: e.title,
+      platform: e.platform ?? null,
+      redeemBy: e.redeemBy ?? null,
+      codeCiphertext: e.codeCiphertext ?? null,
+      codeDataKey: e.codeDataKey ?? null,
     })),
   );
 }
@@ -92,5 +108,10 @@ function toRow(row: typeof claimEvent.$inferSelect): ClaimEventRow {
     kind: row.kind as ClaimKind,
     title: row.title,
     claimedAt: row.claimedAt,
+    platform: row.platform ?? null,
+    redeemBy: row.redeemBy ?? null,
+    // Only whether a key exists — the key itself stays sealed until explicitly requested.
+    hasCode: row.codeCiphertext !== null,
+    redeemedAt: row.redeemedAt ?? null,
   };
 }

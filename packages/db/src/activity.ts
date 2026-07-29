@@ -144,6 +144,7 @@ export async function listJobHistory(
       connectedAccountId: job.connectedAccountId,
       serviceId: connectedAccount.serviceId,
       state: job.state,
+      trigger: job.trigger,
       outcome: job.outcome,
       summary: job.summary,
       createdAt: job.createdAt,
@@ -159,6 +160,7 @@ export async function listJobHistory(
   return rows.map((r) => ({
     ...r,
     state: r.state as JobState,
+    trigger: (r.trigger as "manual" | "scheduled") ?? "manual",
     outcome: (r.outcome as JobOutcome | null) ?? null,
   }));
 }

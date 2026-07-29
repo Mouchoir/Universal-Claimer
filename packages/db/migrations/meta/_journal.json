@@ -57,6 +57,13 @@
       "when": 1785087718770,
       "tag": "0007_lucky_lenny_balinger",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785340594838,
+      "tag": "0008_friendly_black_cat",
+      "breakpoints": true
     }
   ]
 }

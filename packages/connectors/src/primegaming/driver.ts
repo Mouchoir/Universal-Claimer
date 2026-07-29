@@ -16,6 +16,8 @@ export interface PrimeGamingPageDriver {
   /** Claim one offer. */
   claimGame(offer: PrimeOffer): Promise<{ claimed: boolean; alreadyOwned?: boolean; captcha?: boolean }>;
   getUsername(): Promise<string | undefined>;
+  /** Host Prime Gaming served for this region (it routes by marketplace). */
+  servedHost(): Promise<string>;
   getCookies(): Promise<BrowserCookie[]>;
   goto(url: string): Promise<void>;
 }
@@ -40,6 +42,41 @@ export function cleanOfferTitle(rawTitle: string, cardText: string): string {
     .trim()
     .replace(/\s*(claim|get|collect|obtenir|reclamar|einlösen)\b.*$/i, "")
     .trim();
+}
+
+/**
+ * Does this cookie mark a signed-in Amazon session? The auth-token cookie is `at-main` on
+ * amazon.com but `at-acb<country>` on the other marketplaces (`at-acbfr` for amazon.fr,
+ * `at-acbde` for amazon.de …), and `sess-at-*` is its session-scoped twin — so matching by
+ * pattern, on any Amazon domain, is what makes this work for accounts worldwide.
+ */
+export function isAmazonAuthCookie(name: string, domain: string): boolean {
+  if (!/(^|\.)amazon\./i.test(domain)) return false;
+  return /^(sess-)?at-(main|acb[a-z]{2})$/i.test(name);
+}
+
+/**
+ * Which store an offer is redeemed on, derived from the slug suffix Amazon puts on every claim
+ * URL (`framed-collection-gog`, `lonestar-epic`, `terraforming-mars-aga`). That suffix is part of
+ * the URL rather than the rendered page, so it is immune to the display language. Unknown
+ * suffixes return undefined rather than a guess.
+ */
+const PLATFORM_BY_SUFFIX: Record<string, string> = {
+  gog: "GOG",
+  epic: "Epic Games Store",
+  aga: "Amazon Games App",
+  legacy: "Legacy Games",
+  microsoft: "Microsoft Store",
+  origin: "EA app",
+  ubisoft: "Ubisoft Connect",
+};
+
+export function platformFromOfferUrl(url: string): string | undefined {
+  const m = /\/claims\/([^/]+)\//.exec(url) ?? /\/([^/]+)\/dp\//.exec(url);
+  const slug = m?.[1];
+  if (!slug) return undefined;
+  const suffix = slug.split("-").pop() ?? "";
+  return PLATFORM_BY_SUFFIX[suffix.toLowerCase()];
 }
 
 /** Make an offer href absolute, whichever Amazon origin served the card. */
@@ -82,15 +119,35 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
   }
 
   /**
-   * Amazon marks a signed-in session with its `at-main` auth-token cookie (`sess-at-main` on some
-   * marketplaces). Checking the cookie rather than page text keeps this independent of the
-   * account's language.
+   * Ask the page it will actually claim on, rather than inferring from cookies.
+   *
+   * Cookie sniffing gave false positives: Amazon signs you in per marketplace, and Prime Gaming
+   * routes by region — an account holding a valid `at-main` on amazon.com still lands signed-out
+   * on luna.amazon.fr. The claim then failed with no useful explanation. A signed-out page
+   * exposes `data-a-target="sign-in-button"`; that attribute is English whatever the display
+   * language, so this stays locale-independent while being true to what the claim will face.
    */
   async isAuthenticated(): Promise<boolean> {
-    const cookies = await this.context.cookies(["https://www.amazon.com", "https://gaming.amazon.com"]);
-    return cookies.some(
-      (c) => (c.name === "at-main" || c.name === "sess-at-main" || c.name === "at-acbfr") && Boolean(c.value),
-    );
+    const page = await this.page();
+    if (!/amazon\./i.test(page.url())) {
+      await page.goto(HOME_URL, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(4000).catch(() => undefined);
+    }
+    const signedOut = await page
+      .locator("[data-a-target='sign-in-button']")
+      .count()
+      .catch(() => 0);
+    return signedOut === 0;
+  }
+
+  /** The host Prime Gaming actually served (it routes by region), for a precise error message. */
+  async servedHost(): Promise<string> {
+    const page = await this.page();
+    try {
+      return new URL(page.url()).host;
+    } catch {
+      return "gaming.amazon.com";
+    }
   }
 
   async listClaimableGames(): Promise<PrimeOffer[]> {
@@ -153,10 +210,13 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
     return still ? { claimed: false } : { claimed: true };
   }
 
-  /** The offer page's claim control, by attribute first and visible label only as a fallback. */
+  /**
+   * The offer page's claim control. `buy-box_call-to-action` is the real one; `FGWPOffer` is
+   * deliberately NOT used here — on an offer page those belong to the "more offers" carousel at
+   * the bottom, so matching them navigated to a different game instead of claiming this one.
+   */
   private async claimButton(page: Page) {
     for (const sel of [
-      "[data-a-target='FGWPOffer']",
       "[data-a-target='buy-box_call-to-action']",
       "[data-a-target='cta-button']",
     ]) {

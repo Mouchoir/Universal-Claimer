@@ -9,6 +9,7 @@ import {
   loadConfig,
   loadMasterKey,
   openSecretString,
+  sealSecret,
   type CaptchaSolver,
 } from "@uc/core";
 import {
@@ -34,6 +35,7 @@ import {
   getLoginSession,
   getNotificationTarget,
   recordClaimEvents,
+  refreshAccountSecret,
   updateAccountFacts,
   hasActiveJobForAccount,
   listDueSchedules,
@@ -49,7 +51,7 @@ import {
 } from "@uc/db";
 import { deliver, type NotificationKind } from "@uc/notifications";
 import { reconcileInterruptedJobs } from "./reconcile.js";
-import { runClaim, type ClaimJobDeps, type LoadedAccount } from "./run-claim.js";
+import { runClaim, type ClaimJobDeps, type ConnectorHooks, type LoadedAccount } from "./run-claim.js";
 import { runLogin } from "./run-login.js";
 import { makeLoginDeps } from "./login.js";
 import { runScheduler, type SchedulerDeps } from "./run-scheduler.js";
@@ -82,7 +84,7 @@ export async function main(): Promise<void> {
       ...(proxy ? { proxy } : {}),
     });
 
-  const makeContext = (proxy?: string): ConnectorContext => ({
+  const makeContext = (proxy?: string, hooks?: ConnectorHooks): ConnectorContext => ({
     browser: makeBrowser(proxy),
     captcha,
     totp: generateTotp,
@@ -90,6 +92,7 @@ export async function main(): Promise<void> {
       log.info("connector event", { event: event.type });
     },
     log,
+    ...(hooks ? { persistRefreshedSession: hooks.persistRefreshedSession } : {}),
   });
 
   const openProxy = (
@@ -140,13 +143,22 @@ export async function main(): Promise<void> {
       if (claimedItems?.length) {
         await recordClaimEvents(
           db,
-          claimedItems.map((item) => ({
-            connectedAccountId,
-            serviceId,
-            jobId,
-            kind: item.kind,
-            title: item.title,
-          })),
+          claimedItems.map((item) => {
+            // The redemption key is a secret: seal it with the same envelope encryption as every
+            // other stored secret, and never let it reach a summary or a log.
+            const sealed = item.code ? sealSecret(item.code, masterKey) : null;
+            return {
+              connectedAccountId,
+              serviceId,
+              jobId,
+              kind: item.kind,
+              title: item.title,
+              platform: item.platform ?? null,
+              redeemBy: item.redeemBy ? new Date(item.redeemBy) : null,
+              codeCiphertext: sealed?.ciphertext ?? null,
+              codeDataKey: sealed?.wrappedDataKey ?? null,
+            };
+          }),
         );
       }
       if (accountFacts) {
@@ -166,6 +178,13 @@ export async function main(): Promise<void> {
         ),
       ).url as string;
       await deliver({ kind: target.kind as NotificationKind, url }, message);
+    },
+    persistRefreshedSession: async (connectedAccountId, cookies) => {
+      // Re-seal with the same envelope encryption as the original secret; cookies never
+      // touch storage or logs in the clear.
+      const sealed = sealSecret(JSON.stringify({ cookies }), masterKey);
+      await refreshAccountSecret(db, connectedAccountId, sealed.ciphertext, sealed.wrappedDataKey);
+      log.info("refreshed stored session", { account: connectedAccountId, count: cookies.length });
     },
     makeContext,
   };
@@ -204,7 +223,7 @@ export async function main(): Promise<void> {
     enqueueClaim: async (accountId) => {
       const account = await getAccount(db, accountId);
       if (!account) return false;
-      const jobId = await createJob(db, accountId);
+      const jobId = await createJob(db, accountId, "scheduled");
       await boss.send(
         CLAIM_QUEUE,
         { jobId, connectedAccountId: accountId, serviceId: account.serviceId },

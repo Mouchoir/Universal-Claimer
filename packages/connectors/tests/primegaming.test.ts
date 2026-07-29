@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullCaptchaSolver, createLogger, type CaptchaSolver } from "@uc/core";
 import { PrimeGamingConnector } from "../src/primegaming/index.js";
-import { absoluteOfferUrl, cleanOfferTitle, type PrimeGamingPageDriver } from "../src/primegaming/driver.js";
+import {
+  absoluteOfferUrl,
+  cleanOfferTitle,
+  isAmazonAuthCookie,
+  platformFromOfferUrl,
+  type PrimeGamingPageDriver,
+} from "../src/primegaming/driver.js";
 import { defaultFingerprint } from "../src/fingerprint.js";
 import type { AuthInput, ConnectorContext, JobEvent, SessionHandle } from "../src/connector.js";
 
@@ -32,6 +38,7 @@ function fakeDriver(over: Partial<PrimeGamingPageDriver> = {}): PrimeGamingPageD
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
     getUsername: async () => "EmptyProfile",
+    servedHost: async () => "gaming.amazon.com",
     getCookies: async () => [],
     goto: async () => {},
     ...over,
@@ -78,7 +85,8 @@ describe("PrimeGamingConnector.claim", () => {
     });
     const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
     expect(res.outcome).toBe("claimed");
-    expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There" }]);
+    // The slug suffix (-gog) tells us where the key has to be redeemed.
+    expect(res.claimedItems).toEqual([{ kind: "game", title: "Still There", platform: "GOG" }]);
     expect(res.accountFacts?.username).toBe("EmptyProfile");
   });
 
@@ -161,5 +169,75 @@ describe("PrimeGamingConnector.claim", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.reason).toContain("session import");
+  });
+});
+
+describe("isAmazonAuthCookie", () => {
+  it("accepts the .com auth cookie", () => {
+    expect(isAmazonAuthCookie("at-main", ".amazon.com")).toBe(true);
+  });
+
+  it("accepts per-marketplace auth cookies (the reason a French account failed)", () => {
+    expect(isAmazonAuthCookie("at-acbfr", ".amazon.fr")).toBe(true);
+    expect(isAmazonAuthCookie("at-acbde", ".amazon.de")).toBe(true);
+    expect(isAmazonAuthCookie("at-acbjp", ".amazon.co.jp")).toBe(true);
+  });
+
+  it("accepts the session-scoped variant", () => {
+    expect(isAmazonAuthCookie("sess-at-main", ".amazon.com")).toBe(true);
+    expect(isAmazonAuthCookie("sess-at-acbfr", ".amazon.fr")).toBe(true);
+  });
+
+  it("works on Luna and Gaming subdomains", () => {
+    expect(isAmazonAuthCookie("at-acbfr", "luna.amazon.fr")).toBe(true);
+    expect(isAmazonAuthCookie("at-main", "gaming.amazon.com")).toBe(true);
+  });
+
+  it("rejects non-auth Amazon cookies", () => {
+    expect(isAmazonAuthCookie("session-id", ".amazon.fr")).toBe(false);
+    expect(isAmazonAuthCookie("ubid-main", ".amazon.com")).toBe(false);
+  });
+
+  it("rejects auth-looking cookies from other sites", () => {
+    expect(isAmazonAuthCookie("at-main", ".example.com")).toBe(false);
+    expect(isAmazonAuthCookie("at-main", "notamazon.org")).toBe(false);
+  });
+});
+
+describe("PrimeGamingConnector marketplace mismatch", () => {
+  it("names the host that was served so the operator knows where to sign in", async () => {
+    // Amazon routes Prime Gaming by region: a session valid on amazon.com can land signed-out on
+    // luna.amazon.fr. The message must say which host, not just "reconnect".
+    const c = new PrimeGamingConnector({
+      createDriver: () =>
+        fakeDriver({
+          isAuthenticated: async () => false,
+          servedHost: async () => "luna.amazon.fr",
+        }),
+    });
+    const res = await c.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.outcome).toBe("reauth_needed");
+    expect(res.summary).toContain("luna.amazon.fr");
+    expect(res.summary).toMatch(/sign in/i);
+  });
+});
+
+describe("platformFromOfferUrl", () => {
+  it("derives the store from the slug suffix Amazon puts in every claim URL", () => {
+    const base = "https://luna.amazon.fr/claims/";
+    expect(platformFromOfferUrl(`${base}framed-collection-gog/dp/x`)).toBe("GOG");
+    expect(platformFromOfferUrl(`${base}lonestar-epic/dp/x`)).toBe("Epic Games Store");
+    expect(platformFromOfferUrl(`${base}terraforming-mars-aga/dp/x`)).toBe("Amazon Games App");
+    expect(platformFromOfferUrl(`${base}please-touch-the-artwork-legacy/dp/x`)).toBe("Legacy Games");
+  });
+
+  it("works on the gaming.amazon.com URL shape too", () => {
+    expect(platformFromOfferUrl("https://gaming.amazon.com/space-grunts-2-gog/dp/y")).toBe("GOG");
+  });
+
+  it("returns undefined rather than guessing for an unknown suffix", () => {
+    expect(platformFromOfferUrl("https://luna.amazon.fr/claims/some-game-unknownstore/dp/x")).toBeUndefined();
+    expect(platformFromOfferUrl("https://example.com/nothing")).toBeUndefined();
+    expect(platformFromOfferUrl("")).toBeUndefined();
   });
 });

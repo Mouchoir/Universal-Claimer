@@ -62,6 +62,19 @@ export interface ClaimedItem {
   kind: "game" | "prime_sub" | "points";
   /** Display title (game name, channel name, …). Never a secret. */
   title: string;
+  /**
+   * Where the item has to be redeemed when it is not delivered in-place — Prime Gaming hands out
+   * some games as keys for GOG, the Epic Games Store, Amazon Games or Legacy Games. Omitted when
+   * the item lands directly in a library.
+   */
+  platform?: string;
+  /** Deadline to redeem it, ISO 8601. Keys stop working when the offer ends. */
+  redeemBy?: string;
+  /**
+   * The redemption key itself, when the service shows one. A secret: the runtime seals it before
+   * storage and it is never put in a summary or a log.
+   */
+  code?: string;
 }
 
 /**
@@ -124,6 +137,21 @@ export interface ConnectorContext {
   totp(seed: string): string;
   emit(event: JobEvent): void;
   log: Logger;
+  /**
+   * Hand back the session cookies as they stand at the end of an authenticated run, so the stored
+   * secret can be refreshed.
+   *
+   * Services hand out short-lived auth tokens (Epic's expire in ~2 days) and renew them silently
+   * on each visit. A stored snapshot never gets renewed, so it dies while the operator's own
+   * browser stays signed in — which is exactly the "why do I have to reconnect?" problem. Since a
+   * claim already drives a real browser through the site, the refreshed cookies are right there;
+   * persisting them keeps the session alive indefinitely as long as runs happen more often than
+   * the token lifetime.
+   *
+   * Cookies are secret: they are passed here (never returned in a ClaimResult, which is logged
+   * and summarized) and the runtime seals them before storage. Optional — absent in tests.
+   */
+  persistRefreshedSession?(cookies: BrowserCookie[]): Promise<void>;
 }
 
 /**

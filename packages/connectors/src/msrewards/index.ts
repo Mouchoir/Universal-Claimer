@@ -79,8 +79,9 @@ export class MsRewardsConnector implements Connector, InteractiveLogin {
     ctx: ConnectorContext,
   ): Promise<ClaimResult> {
     const session = await ctx.browser.launch(fingerprint);
+    const driver = this.createDriver(session);
+    let authenticated = false;
     try {
-      const driver = this.createDriver(session);
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
       else {
         const totp = input.totpSeed ? ctx.totp(input.totpSeed) : undefined;
@@ -90,6 +91,7 @@ export class MsRewardsConnector implements Connector, InteractiveLogin {
       if (!(await driver.isAuthenticated())) {
         return { outcome: "reauth_needed", summary: "Microsoft session expired; reconnect the account." };
       }
+      authenticated = true;
 
       const remaining = await driver.remainingSearches();
       const target = Math.min(Math.max(0, remaining), this.maxSearches);
@@ -136,6 +138,11 @@ export class MsRewardsConnector implements Connector, InteractiveLogin {
         claimedItems: [{ kind: "points" as const, title: `${done} Rewards searches` }],
       };
     } finally {
+      // Hand back the tokens the service refreshed during this run so the stored session does
+      // not silently expire (see ConnectorContext.persistRefreshedSession).
+      if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
+        await ctx.persistRefreshedSession(await driver.getCookies()).catch(() => undefined);
+      }
       await ctx.browser.close(session);
     }
   }

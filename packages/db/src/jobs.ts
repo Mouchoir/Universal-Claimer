@@ -8,6 +8,7 @@ export type JobState =
   | "requires_human_action"
   | "succeeded"
   | "failed";
+export type JobTrigger = "manual" | "scheduled";
 export type JobOutcome = "claimed" | "nothing_to_claim" | "failed" | "reauth_needed";
 
 const ACTIVE_STATES: JobState[] = ["queued", "running", "requires_human_action"];
@@ -17,6 +18,8 @@ export interface JobRow {
   connectedAccountId: string;
   serviceId: string;
   state: JobState;
+  /** Whether the operator started this run or the scheduler did. */
+  trigger: JobTrigger;
   outcome: JobOutcome | null;
   summary: string | null;
   createdAt: Date;
@@ -24,10 +27,14 @@ export interface JobRow {
   finishedAt: Date | null;
 }
 
-export async function createJob(db: Database, connectedAccountId: string): Promise<string> {
+export async function createJob(
+  db: Database,
+  connectedAccountId: string,
+  trigger: JobTrigger = "manual",
+): Promise<string> {
   const [row] = await db
     .insert(job)
-    .values({ connectedAccountId, state: "queued" })
+    .values({ connectedAccountId, state: "queued", trigger })
     .returning({ id: job.id });
   return row!.id;
 }
@@ -76,6 +83,7 @@ function mapRow(row: {
     connectedAccountId: row.job.connectedAccountId,
     serviceId: row.serviceId,
     state: row.job.state as JobState,
+    trigger: (row.job.trigger as JobTrigger) ?? "manual",
     outcome: (row.job.outcome as JobOutcome | null) ?? null,
     summary: row.job.summary,
     createdAt: row.job.createdAt,

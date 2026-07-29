@@ -13,7 +13,12 @@ import type {
   InteractiveLogin,
   SessionHandle,
 } from "../connector.js";
-import { PlaywrightPrimeGamingDriver, type PrimeGamingDriverFactory } from "./driver.js";
+import {
+  PlaywrightPrimeGamingDriver,
+  platformFromOfferUrl,
+  type PrimeGamingDriverFactory,
+  type PrimeOffer,
+} from "./driver.js";
 
 const PRIME_GAMING_URL = "https://gaming.amazon.com";
 const PRIME_CAPTCHA_KEY = "prime-gaming-key-placeholder";
@@ -69,16 +74,24 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
     ctx: ConnectorContext,
   ): Promise<ClaimResult> {
     const session = await ctx.browser.launch(fingerprint);
+    const driver = this.createDriver(session);
+    let authenticated = false;
     try {
-      const driver = this.createDriver(session);
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
 
       if (!(await driver.isAuthenticated())) {
+        // Amazon signs you in per marketplace and Prime Gaming routes by region, so a session
+        // that is perfectly valid on one Amazon domain can land signed-out on another. Naming
+        // the host that was actually served turns a dead end into an actionable message.
+        const host = await driver.servedHost();
         return {
           outcome: "reauth_needed",
-          summary: "Amazon session is no longer authenticated; reconnect the account.",
+          summary:
+            `Not signed in on ${host}, which is where Prime Gaming served your region. ` +
+            `Sign in on ${host} in your browser, then re-export the session and reconnect.`,
         };
       }
+      authenticated = true;
 
       // Read the account name while the session is open — free, and the dashboard shows it.
       const accountFacts = { username: await driver.getUsername() };
@@ -92,7 +105,7 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
         };
       }
 
-      const claimed: string[] = [];
+      const claimed: PrimeOffer[] = [];
       const failed: string[] = [];
       for (const offer of offers) {
         const res = await driver.claimGame(offer);
@@ -114,16 +127,23 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
             };
           }
         }
-        if (res.claimed) claimed.push(offer.title);
+        if (res.claimed) claimed.push(offer);
         else if (!res.alreadyOwned) failed.push(offer.title);
       }
 
       if (claimed.length > 0) {
         const suffix = failed.length ? `; could not complete: ${failed.join(", ")}` : "";
+        const titles = claimed.map((o) => o.title);
         return {
           outcome: "claimed",
-          summary: `Claimed: ${claimed.join(", ")}${suffix}`,
-          claimedItems: claimed.map((title) => ({ kind: "game" as const, title })),
+          summary: `Claimed: ${titles.join(", ")}${suffix}`,
+          // Record where each game has to be redeemed and by when: several Prime Gaming titles
+          // arrive as store keys that stop working once the offer ends.
+          claimedItems: claimed.map((o) => ({
+            kind: "game" as const,
+            title: o.title,
+            ...(platformFromOfferUrl(o.url) ? { platform: platformFromOfferUrl(o.url) } : {}),
+          })),
           accountFacts,
         };
       }
@@ -140,6 +160,11 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
         accountFacts,
       };
     } finally {
+      // Hand back the tokens the service refreshed during this run so the stored session does
+      // not silently expire (see ConnectorContext.persistRefreshedSession).
+      if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
+        await ctx.persistRefreshedSession(await driver.getCookies()).catch(() => undefined);
+      }
       await ctx.browser.close(session);
     }
   }

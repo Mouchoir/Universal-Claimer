@@ -46,6 +46,8 @@ interface Job {
   id: string;
   serviceId: string;
   state: string;
+  trigger?: string;
+  createdAt?: string;
   outcome: string | null;
   summary: string | null;
 }
@@ -197,6 +199,17 @@ export function ClaimPanel() {
         <ul>
           {jobs.map((j) => (
             <li key={j.id}>
+              <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>
+                {j.createdAt ? new Date(j.createdAt).toLocaleString() : ""}
+              </span>{" "}
+              {j.trigger && (
+                <span
+                  title={j.trigger === "scheduled" ? "Started automatically by the schedule" : "You started this run"}
+                  style={{ fontSize: 12, color: "var(--uc-text-muted)" }}
+                >
+                  [{j.trigger === "scheduled" ? "auto" : "manual"}]
+                </span>
+              )}{" "}
               <strong>{j.serviceId}</strong> — {j.state}
               {j.outcome && (
                 <span style={{ color: OUTCOME_COLOR[j.outcome] ?? "inherit" }}> ({j.outcome})</span>

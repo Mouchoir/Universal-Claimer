@@ -75,9 +75,9 @@ export class EpicConnector implements Connector, InteractiveLogin {
     ctx: ConnectorContext,
   ): Promise<ClaimResult> {
     const session = await ctx.browser.launch(fingerprint);
+    const driver = this.createDriver(session);
+    let authenticated = false;
     try {
-      const driver = this.createDriver(session);
-
       // Re-establish authentication within this session from the stored secret.
       if (input.method === "session_import") {
         await driver.applyCookies(input.cookies);
@@ -92,6 +92,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
           summary: "Epic session is no longer authenticated; reconnect the account.",
         };
       }
+      authenticated = true;
 
       // Read the account name as soon as we know the session is good, so the dashboard learns it
       // even on the (common) weeks where there is nothing to claim.
@@ -154,6 +155,13 @@ export class EpicConnector implements Connector, InteractiveLogin {
         accountFacts,
       };
     } finally {
+      // Epic renewed its short-lived auth tokens during this run; hand them back so the stored
+      // session stays alive instead of expiring in ~2 days (see ConnectorContext).
+      if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
+        await ctx
+          .persistRefreshedSession(await driver.getCookies())
+          .catch(() => undefined); // refreshing is best-effort; never fail a completed claim
+      }
       await ctx.browser.close(session);
     }
   }
