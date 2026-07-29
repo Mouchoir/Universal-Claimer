@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "extension/**/*.test.ts"],
+    include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     environment: "node",
     globalSetup: ["./vitest.globalSetup.ts"],
     // DB integration tests share one Postgres; run files serially so they don't clobber each

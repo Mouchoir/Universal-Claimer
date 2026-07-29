@@ -48,6 +48,16 @@ docker compose up -d --build
 web portal + worker. Open `http://<host>:<PORT>` for first-run onboarding. x86_64 host
 required. Full guide: [docs/operations/deploy.md](docs/operations/deploy.md).
 
+## Session exporter extension
+
+Some services refuse the instance-controlled browser used by assisted login, so an account is
+connected by importing a session instead. The companion browser extension exports one locally —
+it lives in its own repository, published from source to both stores:
+
+**[Mouchoir/universal-claimer-extension](https://github.com/Mouchoir/universal-claimer-extension)**
+
+It is deliberately not vendored here: while a copy lived in this repo it drifted from the real one
+within days, and the two had to be hand-synchronised on every change.
 ## Development
 
 ```bash
