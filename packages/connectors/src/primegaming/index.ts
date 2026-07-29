@@ -13,7 +13,12 @@ import type {
   InteractiveLogin,
   SessionHandle,
 } from "../connector.js";
-import { PlaywrightPrimeGamingDriver, type PrimeGamingDriverFactory } from "./driver.js";
+import {
+  PlaywrightPrimeGamingDriver,
+  platformFromOfferUrl,
+  type PrimeGamingDriverFactory,
+  type PrimeOffer,
+} from "./driver.js";
 
 const PRIME_GAMING_URL = "https://gaming.amazon.com";
 const PRIME_CAPTCHA_KEY = "prime-gaming-key-placeholder";
@@ -100,7 +105,7 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
         };
       }
 
-      const claimed: string[] = [];
+      const claimed: PrimeOffer[] = [];
       const failed: string[] = [];
       for (const offer of offers) {
         const res = await driver.claimGame(offer);
@@ -122,16 +127,23 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
             };
           }
         }
-        if (res.claimed) claimed.push(offer.title);
+        if (res.claimed) claimed.push(offer);
         else if (!res.alreadyOwned) failed.push(offer.title);
       }
 
       if (claimed.length > 0) {
         const suffix = failed.length ? `; could not complete: ${failed.join(", ")}` : "";
+        const titles = claimed.map((o) => o.title);
         return {
           outcome: "claimed",
-          summary: `Claimed: ${claimed.join(", ")}${suffix}`,
-          claimedItems: claimed.map((title) => ({ kind: "game" as const, title })),
+          summary: `Claimed: ${titles.join(", ")}${suffix}`,
+          // Record where each game has to be redeemed and by when: several Prime Gaming titles
+          // arrive as store keys that stop working once the offer ends.
+          claimedItems: claimed.map((o) => ({
+            kind: "game" as const,
+            title: o.title,
+            ...(platformFromOfferUrl(o.url) ? { platform: platformFromOfferUrl(o.url) } : {}),
+          })),
           accountFacts,
         };
       }

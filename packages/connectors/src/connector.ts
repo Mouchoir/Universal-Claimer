@@ -62,6 +62,19 @@ export interface ClaimedItem {
   kind: "game" | "prime_sub" | "points";
   /** Display title (game name, channel name, …). Never a secret. */
   title: string;
+  /**
+   * Where the item has to be redeemed when it is not delivered in-place — Prime Gaming hands out
+   * some games as keys for GOG, the Epic Games Store, Amazon Games or Legacy Games. Omitted when
+   * the item lands directly in a library.
+   */
+  platform?: string;
+  /** Deadline to redeem it, ISO 8601. Keys stop working when the offer ends. */
+  redeemBy?: string;
+  /**
+   * The redemption key itself, when the service shows one. A secret: the runtime seals it before
+   * storage and it is never put in a summary or a log.
+   */
+  code?: string;
 }
 
 /**

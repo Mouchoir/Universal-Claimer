@@ -96,6 +96,9 @@ export const job = pgTable("job", {
     .references(() => connectedAccount.id, { onDelete: "cascade" }),
   // queued | running | requires_human_action | succeeded | failed
   state: text("state").notNull().default("queued"),
+  // What started this run: the operator pressing Run claim, or the scheduler. Worth recording —
+  // "did my automation actually fire?" cannot be answered from the outcome alone.
+  trigger: text("trigger").notNull().default("manual"), // manual | scheduled
   // claimed | nothing_to_claim | failed | reauth_needed (null until terminal)
   outcome: text("outcome"),
   summary: text("summary"), // human-readable, never secrets
@@ -208,6 +211,16 @@ export const claimEvent = pgTable("claim_event", {
   jobId: uuid("job_id").references(() => job.id, { onDelete: "set null" }),
   kind: text("kind").notNull(), // game | prime_sub | points
   title: text("title").notNull(),
+  // Where the item must be redeemed when it is not delivered in place (GOG, Epic, …), and the
+  // deadline to do it — Prime Gaming keys stop working when the offer ends.
+  platform: text("platform"),
+  redeemBy: timestamp("redeem_by", { withTimezone: true }),
+  // The redemption key, envelope-encrypted like every other secret (Principle II). Null when the
+  // item needed no key.
+  codeCiphertext: bytea("code_ciphertext"),
+  codeDataKey: bytea("code_data_key"),
+  // Operator has redeemed it; lets the dashboard stop nagging about it.
+  redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
   claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

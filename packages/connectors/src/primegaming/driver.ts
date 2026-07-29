@@ -55,6 +55,30 @@ export function isAmazonAuthCookie(name: string, domain: string): boolean {
   return /^(sess-)?at-(main|acb[a-z]{2})$/i.test(name);
 }
 
+/**
+ * Which store an offer is redeemed on, derived from the slug suffix Amazon puts on every claim
+ * URL (`framed-collection-gog`, `lonestar-epic`, `terraforming-mars-aga`). That suffix is part of
+ * the URL rather than the rendered page, so it is immune to the display language. Unknown
+ * suffixes return undefined rather than a guess.
+ */
+const PLATFORM_BY_SUFFIX: Record<string, string> = {
+  gog: "GOG",
+  epic: "Epic Games Store",
+  aga: "Amazon Games App",
+  legacy: "Legacy Games",
+  microsoft: "Microsoft Store",
+  origin: "EA app",
+  ubisoft: "Ubisoft Connect",
+};
+
+export function platformFromOfferUrl(url: string): string | undefined {
+  const m = /\/claims\/([^/]+)\//.exec(url) ?? /\/([^/]+)\/dp\//.exec(url);
+  const slug = m?.[1];
+  if (!slug) return undefined;
+  const suffix = slug.split("-").pop() ?? "";
+  return PLATFORM_BY_SUFFIX[suffix.toLowerCase()];
+}
+
 /** Make an offer href absolute, whichever Amazon origin served the card. */
 export function absoluteOfferUrl(href: string, origin = BASE_ORIGIN): string {
   if (!href) return "";
