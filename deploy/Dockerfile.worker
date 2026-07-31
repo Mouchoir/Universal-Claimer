@@ -29,23 +29,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /app ./
 
-# Pre-download the CloakBrowser binary at build time so the finished image ships with it and
-# the first claim isn't slowed by a ~200MB download. The binary is fetched from CloakHQ's
-# official source by the operator's own build (not redistributed by this project); the free
-# v146 binary is licensed for personal + commercial self-hosted use.
-ENV CLOAKBROWSER_CACHE_DIR=/opt/cloakbrowser
-# For CloakBrowser Pro (latest Chromium), pass a license key at build:
-#   docker build --build-arg CLOAKBROWSER_LICENSE_KEY=cb_xxx ...
-ARG CLOAKBROWSER_LICENSE_KEY=""
-RUN CLOAKBROWSER_LICENSE_KEY="$CLOAKBROWSER_LICENSE_KEY" \
-    corepack pnpm --filter @uc/connectors exec cloakbrowser install
+# The CloakBrowser Chromium is fetched at *runtime* into a cache directory, not baked into the
+# image. Two reasons: shipping the binary in a published image would redistribute a third-party
+# build whose terms are CloakHQ's to set, and it keeps the image far smaller. Mount a volume on
+# CLOAKBROWSER_CACHE_DIR and the ~200MB download happens once, not on every container start.
+ENV CLOAKBROWSER_CACHE_DIR=/var/lib/cloakbrowser
+# For CloakBrowser Pro (latest Chromium), set CLOAKBROWSER_LICENSE_KEY in the environment.
 
-# Fail the build — not the first claim — if the bundled Chromium is missing a library.
-RUN CHROME="$(find /opt/cloakbrowser -name chrome -type f | head -1)" \
+# Still verify at build time that this image can actually run Chromium — the missing-library
+# failure otherwise surfaces only at the first claim, buried in a launch log. The binary is
+# downloaded, checked and deleted inside a single layer, so the image does not carry it.
+RUN CLOAKBROWSER_CACHE_DIR=/tmp/cb-verify \
+    corepack pnpm --filter @uc/connectors exec cloakbrowser install \
+    && CHROME="$(find /tmp/cb-verify -name chrome -type f | head -1)" \
     && echo "checking $CHROME" \
     && ! ldd "$CHROME" | grep "not found" \
     && "$CHROME" --headless=new --no-sandbox --dump-dom about:blank > /dev/null \
-    && echo "chromium launches"
+    && echo "chromium launches" \
+    && rm -rf /tmp/cb-verify
 
 ENV DISPLAY=:99
 # Start Xvfb ourselves and `exec` the worker, rather than wrapping it in `xvfb-run`.
@@ -53,6 +54,11 @@ ENV DISPLAY=:99
 # NAS that leaves the operator with no way to diagnose anything. exec'ing also makes node PID 1's
 # process, so `docker stop` delivers SIGTERM to the worker instead of to a wrapper script.
 # The short wait lets the display socket appear before the first browser launch.
+# Fetching the browser before the worker starts (rather than lazily on the first claim) means a
+# download failure shows up immediately in the logs instead of as a mysteriously failed claim.
+# It is a no-op once the cache volume is populated.
 CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & \
 for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done; \
+echo 'ensuring the browser is present…'; \
+corepack pnpm --filter @uc/connectors exec cloakbrowser install || { echo 'browser download failed'; exit 1; }; \
 exec node apps/worker/dist/index.js"]
