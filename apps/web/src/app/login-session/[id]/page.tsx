@@ -42,6 +42,9 @@ export default function LoginSessionPage() {
   const [serviceId, setServiceId] = useState("");
   const [capturing, setCapturing] = useState(false);
   const [relayError, setRelayError] = useState<string | null>(null);
+  // Whether the hidden capture textarea currently holds focus, i.e. whether typing reaches the
+  // remote page at all. Surfaced in the toolbar rather than left to be discovered.
+  const [captureActive, setCaptureActive] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -166,6 +169,21 @@ export default function LoginSessionPage() {
         e.preventDefault();
         return;
       }
+      // …but this page's own controls stay operable from the keyboard: the keys that activate a
+      // focused button belong to the button, not to the remote page. Every other key on a
+      // focused button is the operator typing at the view and missing, so it falls through.
+      const target = e.target as HTMLElement | null;
+      const ownControl = target && target !== ta && target.closest("button, a, [role='button']");
+      if (ownControl && (e.key === "Enter" || e.key === " " || e.key === "Tab")) return;
+
+      // A key pressed anywhere on this page means the operator is trying to type into the view.
+      // Focus drifts more easily than it looks — clicking the Fullscreen button is enough, and
+      // entering the browser's own fullscreen moves it too — so take capture back rather than
+      // letting the keystroke fall into a button. Printable characters reach the remote page
+      // through beforeinput, which only fires on the focused textarea, so this is what makes the
+      // difference between the view responding and appearing dead.
+      if (document.activeElement !== ta) focusCapture();
+
       const ctrlish = e.ctrlKey || e.metaKey;
       // Ctrl/Cmd+V is handled by the paste listener (local clipboard → insertText).
       if (ctrlish && (e.key === "v" || e.key === "V")) return;
@@ -207,11 +225,16 @@ export default function LoginSessionPage() {
       e.preventDefault();
     };
 
-    ta.addEventListener("keydown", onKey);
+    // keydown goes on the document, in the capture phase, rather than on the textarea. Editing
+    // and navigation keys are the ones that stop working when focus has slipped somewhere else
+    // on the page, and that failure is invisible: the view keeps streaming, so it looks like the
+    // remote page is ignoring the key. On the document they are forwarded no matter what holds
+    // focus. beforeinput and paste stay on the textarea — they only exist there.
+    document.addEventListener("keydown", onKey, true);
     ta.addEventListener("beforeinput", onBefore);
     ta.addEventListener("paste", onPasteEv);
     return () => {
-      ta.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       ta.removeEventListener("beforeinput", onBefore);
       ta.removeEventListener("paste", onPasteEv);
     };
@@ -326,6 +349,14 @@ export default function LoginSessionPage() {
               <button type="button" className="uc-quiet" onClick={stage.toggle}>
                 {stage.expanded ? "Exit fullscreen" : "Fullscreen"}
               </button>
+              {/* Whether keystrokes are reaching the remote page, stated outright. This failed
+                  silently for a long time — the view keeps streaming when capture is lost, so a
+                  dead keyboard is indistinguishable from a page that ignores you. */}
+              <span
+                style={{ color: captureActive ? "var(--uc-success)" : "var(--uc-warning)", fontSize: 13 }}
+              >
+                {captureActive ? "Keyboard connected" : "Click the view to type"}
+              </span>
               {stage.expanded && (
                 <>
                   {/* True either way: the browser's own fullscreen consumes Escape to exit, and
@@ -345,6 +376,8 @@ export default function LoginSessionPage() {
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
+              onFocus={() => setCaptureActive(true)}
+              onBlur={() => setCaptureActive(false)}
               style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
             />
             <div className="uc-stage-view">
