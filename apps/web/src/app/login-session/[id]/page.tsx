@@ -48,13 +48,19 @@ export default function LoginSessionPage() {
   const imgRef = useRef<HTMLImageElement | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
+  // preventScroll matters: the capture textarea sits inside the stage rather than pinned to the
+  // viewport (native fullscreen only renders the stage's subtree), so a plain focus() can scroll
+  // the page to reach it — shifting the canvas out from under the click being processed.
+  const focusCapture = useCallback(() => taRef.current?.focus({ preventScroll: true }), []);
+
   // Entering or leaving fullscreen moves focus, and keystrokes go nowhere the moment the hidden
   // capture textarea loses it. Every transition puts it back.
   const refocus = useCallback(() => {
     // After the transition frame: the browser is still rearranging focus during the event.
-    requestAnimationFrame(() => taRef.current?.focus());
-  }, []);
+    requestAnimationFrame(() => focusCapture());
+  }, [focusCapture]);
   const stage = useExpandable(stageRef, refocus);
+  const { escapeExits, collapse: collapseStage } = stage;
 
   // Poll status (drives the redirect on success and reveals the deployment mode).
   useEffect(() => {
@@ -138,15 +144,15 @@ export default function LoginSessionPage() {
   useEffect(() => {
     const ta = taRef.current;
     if (!ta || !embedRelay || status !== "awaiting_user") return;
-    ta.focus();
+    focusCapture();
 
     const onKey = (e: KeyboardEvent) => {
       // Escape is a real key the remote login page may want, so it is normally forwarded. The
       // one exception is the CSS fallback for fullscreen: nothing is intercepting Escape on our
       // behalf there, so it has to close the expanded view instead. Under the browser's own
       // fullscreen this never fires — the Escape that exits is consumed before reaching us.
-      if (e.key === "Escape" && stage.escapeExits) {
-        stage.collapse();
+      if (e.key === "Escape" && escapeExits) {
+        collapseStage();
         e.preventDefault();
         return;
       }
@@ -199,7 +205,10 @@ export default function LoginSessionPage() {
       ta.removeEventListener("beforeinput", onBefore);
       ta.removeEventListener("paste", onPasteEv);
     };
-  }, [embedRelay, status, send, sendKey, stage]);
+    // Depends on the two values it actually reads, not on the whole `stage` object: that object
+    // is rebuilt every render, which would tear down and re-register these listeners — and
+    // re-assert focus — on every single render.
+  }, [embedRelay, status, send, sendKey, focusCapture, escapeExits, collapseStage]);
 
   function drawFrame(msg: { data: string; format: string; w: number; h: number }) {
     const canvas = canvasRef.current;
@@ -222,11 +231,16 @@ export default function LoginSessionPage() {
   const button = (e: React.MouseEvent) => (e.button === 2 ? "right" : e.button === 1 ? "middle" : "left");
 
   const onMouseDown = (e: React.MouseEvent) => {
+    // Read the position BEFORE touching focus. pointer() measures the canvas with
+    // getBoundingClientRect, while e.clientX/Y were captured when the event fired: anything that
+    // moves the canvas in between makes the two disagree and the click lands somewhere else in
+    // the remote page — which looks like the page ignoring you, not like a mis-aimed click.
+    const at = pointer(e);
     // Prevent the default focus change (the canvas isn't focusable, so the browser would blur
     // our capture textarea and keystrokes would go nowhere), then route the keyboard to it.
     e.preventDefault();
-    taRef.current?.focus();
-    send({ t: "mouse", kind: "down", ...pointer(e), button: button(e), buttons: e.buttons });
+    focusCapture();
+    send({ t: "mouse", kind: "down", ...at, button: button(e), buttons: e.buttons });
   };
   const onMouseUp = (e: React.MouseEvent) =>
     send({ t: "mouse", kind: "up", ...pointer(e), button: button(e), buttons: e.buttons });
