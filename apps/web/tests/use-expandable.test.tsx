@@ -111,6 +111,60 @@ describe("useExpandable", () => {
     expect(result.current.expanded).toBe(false);
   });
 
+  it("survives a browser that refuses by throwing instead of rejecting", async () => {
+    // A permissions policy on an embedding frame does exactly this. Letting the throw escape
+    // aborted the click handler before the transition was signalled, so the view expanded but
+    // focus stayed on the button that was clicked — every later keystroke went to the button,
+    // and the console got an uncaught error.
+    (Element.prototype as { requestFullscreen?: unknown }).requestFullscreen = vi.fn(() => {
+      throw new Error("fullscreen is not allowed by permissions policy");
+    });
+    const onTransition = vi.fn();
+    const { result } = setup(onTransition);
+
+    await act(async () => result.current.toggle());
+
+    expect(result.current.expanded).toBe(true);
+    expect(result.current.nativeFullscreen).toBe(false);
+    expect(result.current.escapeExits).toBe(true);
+    expect(onTransition).toHaveBeenCalled();
+  });
+
+  it("signals the transition exactly once per change", async () => {
+    // settle() used to run inside a setState updater, which React is free to invoke more than
+    // once — refocusing twice is harmless, but the contract violation is not.
+    grantFullscreen();
+    const onTransition = vi.fn();
+    const { result } = setup(onTransition);
+
+    await act(async () => result.current.toggle());
+    expect(onTransition).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      setFullscreenElement(null);
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    expect(onTransition).toHaveBeenCalledTimes(2);
+
+    // A stray event after we have already collapsed must not re-signal.
+    await act(async () => document.dispatchEvent(new Event("fullscreenchange")));
+    expect(onTransition).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses anyway when the browser refuses to leave fullscreen", async () => {
+    grantFullscreen();
+    (document as { exitFullscreen?: unknown }).exitFullscreen = vi.fn(() =>
+      Promise.reject(new Error("nope")),
+    );
+    const { result } = setup();
+    await act(async () => result.current.toggle());
+
+    await act(async () => result.current.collapse());
+
+    // Otherwise the view is stuck open with no way out.
+    expect(result.current.expanded).toBe(false);
+  });
+
   it("stays expanded via CSS when the browser refuses the request", async () => {
     (Element.prototype as { requestFullscreen?: unknown }).requestFullscreen = vi.fn(() =>
       Promise.reject(new Error("permissions policy")),

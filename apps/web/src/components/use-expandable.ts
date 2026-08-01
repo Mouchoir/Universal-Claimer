@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Expand/collapse a element to fill the screen, preferring the browser's own Fullscreen API.
+ * Expand/collapse an element to fill the screen, preferring the browser's own Fullscreen API.
  *
  * Native fullscreen is not just the tidier option here — it is the one that resolves the Escape
  * conflict for free. The relay wizard forwards Escape to the remote browser (it is a real key a
@@ -11,8 +11,13 @@ import { useCallback, useEffect, useState } from "react";
  * is natively fullscreen the browser consumes the Escape that exits and never dispatches it to
  * the page, so both behaviours coexist without either having to give way.
  *
- * The CSS fallback exists for a browser that refuses or lacks the API. There, nothing intercepts
- * Escape on our behalf, so the caller has to — see `escapeExits`.
+ * The CSS fallback covers a browser that lacks the API, refuses it, or is embedded somewhere a
+ * permissions policy forbids it. There nothing intercepts Escape for us, so the caller has to —
+ * see `escapeExits`.
+ *
+ * Every path ends in `onTransition`, including the failures. That callback is how the caller
+ * restores whatever the transition disturbed — for the wizard, keyboard focus — so a path that
+ * skips it leaves the feature looking broken rather than merely unstyled.
  */
 export interface Expandable {
   /** The element should fill the screen, by whichever mechanism. */
@@ -30,60 +35,72 @@ export interface Expandable {
 
 export function useExpandable(
   ref: { current: HTMLElement | null },
-  /** Called after every transition — the wizard uses it to restore keyboard capture. */
+  /** Called after every transition, successful or not — the wizard restores keyboard capture. */
   onTransition?: () => void,
 ): Expandable {
   const [expanded, setExpanded] = useState(false);
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  // Mirrors nativeFullscreen for the fullscreenchange listener, which must not re-subscribe on
+  // every change and so cannot read the state variable.
+  const nativeRef = useRef(false);
+
+  /** The single place state settles, so no path can reach a new layout without signalling it. */
+  const settle = useCallback(
+    (isExpanded: boolean, isNative: boolean) => {
+      nativeRef.current = isNative;
+      setExpanded(isExpanded);
+      setNativeFullscreen(isNative);
+      onTransition?.();
+    },
+    [onTransition],
+  );
 
   // The browser can leave fullscreen without us: Escape, F11, the tab going to the background.
   // Treating this event as the source of truth keeps the button label honest in those cases.
   useEffect(() => {
     const onChange = () => {
-      if (document.fullscreenElement) return;
-      setNativeFullscreen((wasNative) => {
-        if (wasNative) {
-          setExpanded(false);
-          onTransition?.();
-        }
-        return false;
-      });
+      if (document.fullscreenElement || !nativeRef.current) return;
+      settle(false, false);
     };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
-  }, [onTransition]);
+  }, [settle]);
 
   const collapse = useCallback(() => {
-    if (document.fullscreenElement && document.exitFullscreen) {
-      // fullscreenchange finishes the job, including onTransition.
-      void Promise.resolve(document.exitFullscreen()).catch(() => undefined);
+    if (nativeRef.current && document.fullscreenElement && document.exitFullscreen) {
+      // On success fullscreenchange finishes the job; if the browser refuses, settle anyway
+      // rather than leaving a view that will not close.
+      Promise.resolve(document.exitFullscreen()).catch(() => settle(false, false));
       return;
     }
-    setExpanded(false);
-    setNativeFullscreen(false);
-    onTransition?.();
-  }, [onTransition]);
+    settle(false, false);
+  }, [settle]);
 
   const expand = useCallback(() => {
+    // Expand immediately: the CSS fallback is correct on its own, and the operator gets the
+    // bigger view without waiting to hear whether the browser will grant real fullscreen.
     setExpanded(true);
-    const el = ref.current;
-    if (!el?.requestFullscreen) {
-      onTransition?.();
+
+    let request: Promise<void> | undefined;
+    try {
+      request = ref.current?.requestFullscreen?.();
+    } catch {
+      // A refusal can arrive as a synchronous throw rather than a rejected promise — a
+      // permissions policy on an embedding frame does exactly that. Letting it escape would
+      // abort this handler before `settle`, stranding the view expanded with focus still on
+      // whatever was clicked, and surface as an uncaught error in the console.
+      request = undefined;
+    }
+
+    if (!request) {
+      settle(true, false);
       return;
     }
-    Promise.resolve(el.requestFullscreen()).then(
-      () => {
-        setNativeFullscreen(true);
-        onTransition?.();
-      },
-      () => {
-        // Refused (no user gesture, embedded in a restrictive frame, permissions policy).
-        // The CSS fallback is already applied; just stay there.
-        setNativeFullscreen(false);
-        onTransition?.();
-      },
+    Promise.resolve(request).then(
+      () => settle(true, true),
+      () => settle(true, false),
     );
-  }, [ref, onTransition]);
+  }, [ref, settle]);
 
   const toggle = useCallback(() => {
     if (expanded) collapse();
