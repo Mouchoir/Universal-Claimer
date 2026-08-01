@@ -17,8 +17,8 @@ export interface CloakBrowserOptions {
 /**
  * BrowserFactory backed by the official `cloakbrowser` package, which downloads and manages
  * the source-patched Chromium binary automatically (cached under ~/.cloakbrowser or
- * `CLOAKBROWSER_CACHE_DIR`). No manual binary path is required — the finished product bundles
- * the binary by pre-downloading it during the Docker build (see deploy/Dockerfile.worker).
+ * `CLOAKBROWSER_CACHE_DIR`). No manual binary path is required — the deployment fetches the
+ * binary once into a cache volume on first boot (see deploy/entrypoint.mjs).
  */
 export class CloakBrowserFactory implements BrowserFactory {
   constructor(private readonly opts: CloakBrowserOptions = {}) {}

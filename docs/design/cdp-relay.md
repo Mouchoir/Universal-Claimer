@@ -83,11 +83,16 @@ screenshot capture and DB input draining are removed — the relay is event-driv
   uses the CloakBrowser window directly.
 - **CDP relay** (`LOGIN_RELAY_EMBED=true`, headless NAS deployment): the flow above. The worker
   reads the same env to decide whether to start the relay, and connects to the web at
-  `RELAY_INTERNAL_URL` (default `ws://web:8080`) with `RELAY_TOKEN`.
+  `RELAY_INTERNAL_URL` (default `ws://127.0.0.1:8080`) with `RELAY_TOKEN`.
 
 ## Deployment
 
-The web image switches from Next `standalone` to a custom server (`node apps/web/server.mjs`)
+The image switches from Next `standalone` to a custom server (`node apps/web/server.mjs`)
 so the WebSocket upgrade can be handled in-process; no extra port is published (the relay is
-same-origin on the existing web port). `docker-compose.yml` gains `LOGIN_RELAY_EMBED=true`,
-a generated `RELAY_TOKEN` shared by web + worker, and `RELAY_INTERNAL_URL` on the worker.
+same-origin on the existing web port). `docker-compose.yml` gains `LOGIN_RELAY_EMBED=true` and a
+generated `RELAY_TOKEN` on the `app` service.
+
+Web and worker share that container (`deploy/entrypoint.mjs`), so the worker→web leg is a
+loopback connection and `RELAY_INTERNAL_URL` only needs setting if the two are split apart again.
+`RELAY_TOKEN` still guards it: loopback inside a container is not a trust boundary worth removing
+an authentication check for, and it keeps the split deployment working unchanged.

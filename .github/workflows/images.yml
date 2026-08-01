@@ -1,9 +1,9 @@
-name: Publish images
+name: Publish image
 
-# Builds the web and worker images and publishes them to GitHub Container Registry, so a
-# deployment can pull them instead of building on the target host. That matters for a NAS: the
-# Next build plus the workspace install is heavy, and Portainer cannot build from a pasted
-# compose file at all — it has no build context, only `image:` references.
+# Builds the application image and publishes it to GitHub Container Registry, so a deployment can
+# pull it instead of building on the target host. That matters for a NAS: the Next build plus the
+# workspace install is heavy, and Portainer cannot build from a pasted compose file at all — it
+# has no build context, only `image:` references.
 on:
   push:
     branches: [main]
@@ -11,6 +11,7 @@ on:
       - "apps/**"
       - "packages/**"
       - "deploy/Dockerfile.*"
+      - "deploy/entrypoint.mjs"
       - ".dockerignore"
       - "pnpm-lock.yaml"
       - ".github/workflows/images.yml"
@@ -25,14 +26,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: web
-            dockerfile: deploy/Dockerfile.web
-          - name: worker
-            dockerfile: deploy/Dockerfile.worker
     steps:
       - uses: actions/checkout@v4
 
@@ -48,12 +41,12 @@ jobs:
       # commonly have them.
       - name: Compute image name
         id: img
-        run: echo "name=${REGISTRY}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/uc-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+        run: echo "name=${REGISTRY}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/uc-app" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: deploy/Dockerfile.app
           # x86_64 only: the CloakBrowser build the worker downloads is amd64.
           platforms: linux/amd64
           push: true

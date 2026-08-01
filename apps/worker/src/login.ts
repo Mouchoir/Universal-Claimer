@@ -24,7 +24,9 @@ import type { LoginDeps, LoginJob } from "./run-login.js";
 function relayConfig(): { enabled: boolean; webUrl: string; token: string } {
   return {
     enabled: process.env.LOGIN_RELAY_EMBED === "true",
-    webUrl: process.env.RELAY_INTERNAL_URL ?? "ws://web:8080",
+    // Loopback by default: web and worker share a container in the packaged deployment, so the
+    // relay never leaves it. Override for a split deployment.
+    webUrl: process.env.RELAY_INTERNAL_URL ?? "ws://127.0.0.1:8080",
     token: process.env.RELAY_TOKEN ?? "",
   };
 }
