@@ -29,12 +29,8 @@ export default async function DashboardPage() {
 
   return (
     <main>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-        <h1>Dashboard</h1>
-        <Link href="/activity" style={{ fontSize: 14 }}>
-          Activity &amp; history →
-        </Link>
-      </div>
+      {/* Activity has its own tab in the header; a second link beside the title only repeats it. */}
+      <h1>Dashboard</h1>
 
       <section style={{ marginTop: 16 }}>
         <h2>Services</h2>

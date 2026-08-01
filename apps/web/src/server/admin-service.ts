@@ -87,6 +87,29 @@ export async function setupAdmin(store: AdminStore, input: SetupInput): Promise<
   }
 }
 
+/** A recovery question as shown on the reset form — the prompt only, never the answer hash. */
+export interface RecoveryPrompt {
+  position: number;
+  question: string;
+}
+
+/**
+ * The three questions to display on the reset form, in order. Empty when recovery is off.
+ *
+ * The caller for this is unauthenticated by necessity: it is the "I forgot my password" screen,
+ * and an answer cannot be given to a question the operator cannot see. So the questions are
+ * readable by anyone who can reach the portal — which is the accepted trade of this recovery
+ * mechanism, and the reason the answers are hashed rather than the questions kept secret.
+ */
+export async function listRecoveryQuestions(store: AdminStore): Promise<RecoveryPrompt[]> {
+  const admin = await store.getAdmin();
+  if (!admin || !admin.recoveryEnabled) return [];
+  return (await store.getSecurityQuestions())
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .map((q) => ({ position: q.position, question: q.question }));
+}
+
 /** Verify a login password against the admin hash (FR-002). */
 export async function verifyLogin(store: AdminStore, password: string): Promise<boolean> {
   const admin = await store.getAdmin();

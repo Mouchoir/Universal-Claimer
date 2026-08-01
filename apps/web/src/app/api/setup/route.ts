@@ -41,6 +41,6 @@ export async function POST(req: Request): Promise<NextResponse> {
     });
   }
 
-  startSession();
+  startSession(req);
   return NextResponse.json({ ok: true }, { status: 201 });
 }

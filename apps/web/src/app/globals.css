@@ -112,6 +112,132 @@ input[type="radio"] {
   accent-color: var(--uc-primary);
 }
 
+/* Persistent navigation for the signed-in pages. Sits above the page content in the container,
+   so every page has a way home without having to provide one itself. */
+.uc-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--uc-space) * 2);
+  padding-bottom: calc(var(--uc-space) * 2);
+  margin-bottom: calc(var(--uc-space) * 2);
+  border-bottom: 1px solid var(--uc-border);
+  flex-wrap: wrap;
+}
+.uc-brand {
+  font-weight: 600;
+  color: var(--uc-text);
+  text-decoration: none;
+}
+.uc-brand:hover {
+  color: var(--uc-primary);
+}
+.uc-nav {
+  display: flex;
+  gap: calc(var(--uc-space) * 2);
+  /* Pushes sign-out to the far end, away from the navigation it is not part of. */
+  margin-right: auto;
+}
+.uc-nav a {
+  color: var(--uc-text-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+.uc-nav a:hover {
+  color: var(--uc-text);
+}
+.uc-nav a.uc-nav-current {
+  color: var(--uc-text);
+  /* Not colour alone: the current page stays identifiable without relying on hue. */
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.uc-header button {
+  padding: 4px 12px;
+  font-size: 14px;
+}
+
+/* The relay stage: the live view plus every control that must stay reachable while it fills the
+   screen. Native fullscreen renders only the fullscreen element's subtree, so the toolbar and
+   the hidden keyboard-capture textarea live inside this container rather than beside it. */
+.uc-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--uc-space);
+  position: relative;
+}
+.uc-stage-bar {
+  display: flex;
+  gap: var(--uc-space);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.uc-stage-view {
+  display: flex;
+  /* min-height:0 lets the view shrink below the canvas's intrinsic height once expanded;
+     without it a flex item refuses to go under its content size and the frame overflows. */
+  min-height: 0;
+  flex: 1;
+}
+.uc-stage canvas {
+  width: 100%;
+  display: block;
+  cursor: text;
+  border: 1px solid var(--uc-border);
+  border-radius: var(--uc-radius);
+  background: #000;
+}
+
+/* Expanded, CSS fallback only — the browser already sizes a native fullscreen element. */
+.uc-stage-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+/* Fit the 1280x800 frame inside whatever space is left, without distorting it: the pointer
+   mapping scales off the canvas's rendered size, so any letterboxing stays accurate. */
+.uc-stage:fullscreen,
+.uc-stage-expanded {
+  height: 100%;
+  padding: var(--uc-space);
+  background: var(--uc-bg);
+}
+.uc-stage:fullscreen .uc-stage-view,
+.uc-stage-expanded .uc-stage-view {
+  justify-content: center;
+  align-items: center;
+}
+.uc-stage:fullscreen canvas,
+.uc-stage-expanded canvas {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* A secondary action that must not compete with the form's primary button. */
+button.uc-quiet {
+  background: transparent;
+  border-color: var(--uc-border);
+  color: var(--uc-text-muted);
+}
+button.uc-quiet:hover:not(:disabled) {
+  color: var(--uc-text);
+  filter: none;
+}
+
+/* A secret field plus its reveal toggle. The toggle is quiet on purpose: it sits inside a form
+   whose primary action is a filled button, and must not compete with it. */
+.uc-secret {
+  display: flex;
+  gap: var(--uc-space);
+  align-items: center;
+}
+.uc-secret > button {
+  flex: none;
+  /* Fixed width so the field does not resize as the label flips between Show and Hide. */
+  min-width: 62px;
+}
+
 textarea {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

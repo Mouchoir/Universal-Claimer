@@ -18,6 +18,6 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!(await verifyLogin(getAdminStore(), parsed.data.password))) {
     return jsonError("INVALID_CREDENTIALS", "Incorrect password.", 401);
   }
-  startSession();
+  startSession(req);
   return NextResponse.json({ ok: true });
 }
