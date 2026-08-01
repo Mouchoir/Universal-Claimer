@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useExpandable } from "@/components/use-expandable";
 
 // The worker launches the browser at this fixed viewport (see connectors' defaultFingerprint),
 // which is what CDP Input events expect. Mirrors RELAY_VIEWPORT in @uc/core relay.ts — kept
@@ -45,6 +46,15 @@ export default function LoginSessionPage() {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  // Entering or leaving fullscreen moves focus, and keystrokes go nowhere the moment the hidden
+  // capture textarea loses it. Every transition puts it back.
+  const refocus = useCallback(() => {
+    // After the transition frame: the browser is still rearranging focus during the event.
+    requestAnimationFrame(() => taRef.current?.focus());
+  }, []);
+  const stage = useExpandable(stageRef, refocus);
 
   // Poll status (drives the redirect on success and reveals the deployment mode).
   useEffect(() => {
@@ -131,6 +141,15 @@ export default function LoginSessionPage() {
     ta.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      // Escape is a real key the remote login page may want, so it is normally forwarded. The
+      // one exception is the CSS fallback for fullscreen: nothing is intercepting Escape on our
+      // behalf there, so it has to close the expanded view instead. Under the browser's own
+      // fullscreen this never fires — the Escape that exits is consumed before reaching us.
+      if (e.key === "Escape" && stage.escapeExits) {
+        stage.collapse();
+        e.preventDefault();
+        return;
+      }
       const ctrlish = e.ctrlKey || e.metaKey;
       // Ctrl/Cmd+V is handled by the paste listener (local clipboard → insertText).
       if (ctrlish && (e.key === "v" || e.key === "V")) return;
@@ -180,7 +199,7 @@ export default function LoginSessionPage() {
       ta.removeEventListener("beforeinput", onBefore);
       ta.removeEventListener("paste", onPasteEv);
     };
-  }, [embedRelay, status, send, sendKey]);
+  }, [embedRelay, status, send, sendKey, stage]);
 
   function drawFrame(msg: { data: string; format: string; w: number; h: number }) {
     const canvas = canvasRef.current;
@@ -270,33 +289,51 @@ export default function LoginSessionPage() {
             )}
           </div>
 
-          {/* Hidden capture surface for keyboard + paste (canvas can't receive those). */}
-          <textarea
-            ref={taRef}
-            aria-hidden="true"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            style={{ position: "fixed", top: 0, left: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none", zIndex: -1 }}
-          />
-          <canvas
-            ref={canvasRef}
-            width={VIEW_W}
-            height={VIEW_H}
-            onMouseDown={onMouseDown}
-            onMouseUp={onMouseUp}
-            onMouseMove={onMouseMove}
-            onWheel={onWheel}
-            onContextMenu={(e) => e.preventDefault()}
-            style={{
-              width: "100%",
-              display: "block",
-              cursor: "text",
-              border: "1px solid var(--uc-border)",
-              borderRadius: "var(--uc-radius)",
-              background: "#000",
-            }}
-          />
+          {/* Everything the operator needs while the view fills the screen lives in here: native
+              fullscreen renders only this subtree, so anything left outside becomes unreachable
+              — including the capture textarea, which would silently stop receiving keystrokes. */}
+          <div
+            ref={stageRef}
+            className={stage.expanded && !stage.nativeFullscreen ? "uc-stage uc-stage-expanded" : "uc-stage"}
+          >
+            <div className="uc-stage-bar">
+              <button type="button" className="uc-quiet" onClick={stage.toggle}>
+                {stage.expanded ? "Exit fullscreen" : "Fullscreen"}
+              </button>
+              {stage.expanded && (
+                <>
+                  {/* True either way: the browser's own fullscreen consumes Escape to exit, and
+                      the CSS fallback binds it in the key handler. */}
+                  <span style={{ color: "var(--uc-text-muted)", fontSize: 13 }}>
+                    Press Esc to exit.
+                  </span>
+                  {captureButton}
+                </>
+              )}
+            </div>
+
+            {/* Hidden capture surface for keyboard + paste (canvas can't receive those). */}
+            <textarea
+              ref={taRef}
+              aria-hidden="true"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+            />
+            <div className="uc-stage-view">
+              <canvas
+                ref={canvasRef}
+                width={VIEW_W}
+                height={VIEW_H}
+                onMouseDown={onMouseDown}
+                onMouseUp={onMouseUp}
+                onMouseMove={onMouseMove}
+                onWheel={onWheel}
+                onContextMenu={(e) => e.preventDefault()}
+              />
+            </div>
+          </div>
         </>
       ) : (
         // Native window (default): the operator logs in in the window that just opened.

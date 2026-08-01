@@ -52,6 +52,7 @@ export function PasswordInput({
       />
       <button
         type="button"
+        className="uc-quiet"
         onClick={() => setRevealed((r) => !r)}
         aria-pressed={revealed}
         // The control is icon-free text, so the label has to carry the state for a screen reader.

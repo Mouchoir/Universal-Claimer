@@ -63,6 +63,27 @@ Client → worker:
 - `{ t: "text", text }` — inserted verbatim via `Input.insertText` (**this is how paste and IME
   work**; the client sends the whole pasted/typed string).
 
+### Fullscreen, and who gets the Escape key
+
+The live view is a fixed 1280×800 viewport rendered into a canvas, which is small on a laptop, so
+the wizard can expand it to fill the screen. It asks for the browser's own Fullscreen API rather
+than doing it in CSS, and that choice is what settles the Escape conflict.
+
+Escape is a key a login page legitimately wants (dismissing an autocomplete dropdown, a modal),
+so the wizard forwards it like any other. Binding Escape to "leave fullscreen" would take it
+away. Under native fullscreen it does not have to: the browser consumes the Escape that exits
+fullscreen and never dispatches it to the page, so the wizard simply never sees that particular
+press and keeps forwarding every other one.
+
+A CSS fallback covers a browser that lacks or refuses the API. There nothing intercepts Escape
+for us, so the key handler spends it on collapsing the view — the one case where the remote page
+does not receive it. `useExpandable` reports which regime is active via `escapeExits`.
+
+One structural consequence: native fullscreen renders **only the fullscreen element's subtree**.
+The hidden textarea that captures keyboard and paste therefore lives inside the stage container,
+not beside it — outside, it would stop being focusable and typing would silently stop. Both
+transitions also move focus, so the wizard restores it on the next frame.
+
 ### Keystroke security (unchanged intent)
 
 Keystrokes — including the password — traverse the relay live but are **never persisted**: the
