@@ -18,19 +18,35 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-On startup the stack:
+## The two containers
 
-1. starts **postgres**,
-2. runs the one-shot **migrate** service (applies migrations + seeds services),
-3. starts **web** (portal) and **worker** (automation). The worker image pre-downloads the
-   CloakBrowser binary at build.
+`postgres`, and `app` — the portal, the claim worker and the migrations all live in the second
+one. Only the database has a reason to keep its own lifecycle (backups, restores and major-version
+upgrades that must not move in lockstep with the application image); splitting the rest into
+separate containers only made the stack harder to read in a Docker UI.
 
-Open `http://<host>:<PORT>` and complete the first-run onboarding.
+`deploy/entrypoint.mjs` runs the startup steps in order, failing loudly at the first one that
+breaks rather than deferring the error to the first claim:
+
+1. start **Xvfb** — the worker runs Chromium headed for stealth, so it needs a display even on a
+   headless host,
+2. apply **migrations** (and seed services),
+3. fetch the **CloakBrowser** binary into `/var/lib/cloakbrowser`. ~200MB on first boot, then a
+   no-op — mount the `uc_browser` volume and it survives redeploys,
+4. start the **web portal** and the **worker**, supervised together.
+
+Supervision is a real supervisor, not `sh -c 'a & b'`: if either process dies the container exits
+non-zero so the restart policy fires, and `docker stop` reaches both so they close their database
+pools (`packages/core/src/supervisor.ts`).
+
+Open `http://<host>:<PORT>` and complete the first-run onboarding. Allow a couple of minutes on
+the very first boot — step 3 runs before the portal starts listening.
 
 ## Health
 
 - `GET /api/health` → `{ ok, db }` (200 when the DB is reachable, 503 otherwise).
-- The `web` container has a healthcheck hitting `/api/health`.
+- The `app` container has a healthcheck hitting `/api/health`, with a long `start_period` so the
+  first-boot browser download does not mark it unhealthy.
 
 ## CI
 

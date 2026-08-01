@@ -32,7 +32,7 @@ packages/core   # config, crypto, logging, captcha-solver interface
 packages/db     # Drizzle schema, migrations, data access, pg-boss
 packages/connectors    # connector interface + per-service plugins (Epic, ...)
 packages/notifications # optional outbound webhook (Discord/Telegram/ntfy)
-deploy          # Dockerfiles + docker-compose.yml + .env.example
+deploy          # Dockerfile + entrypoint + docker-compose.yml + .env.example
 ```
 
 ## Self-host (Docker)
@@ -44,9 +44,11 @@ cp .env.example .env      # set APP_ENCRYPTION_KEY + RELAY_TOKEN (see the file),
 docker compose up -d --build
 ```
 
-`docker compose up` starts Postgres, applies migrations (one-shot `migrate` service), then the
-web portal + worker. Open `http://<host>:<PORT>` for first-run onboarding. x86_64 host
-required. Full guide: [docs/operations/deploy.md](docs/operations/deploy.md).
+Two containers: `postgres`, and `app` — which applies the migrations, then runs the web portal
+and the claim worker together. Open `http://<host>:<PORT>` for first-run onboarding. The first
+boot downloads the ~200MB browser into a cache volume, so give it a couple of minutes before the
+portal answers. x86_64 host required.
+Full guide: [docs/operations/deploy.md](docs/operations/deploy.md).
 
 ## Session exporter extension
 

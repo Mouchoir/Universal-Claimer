@@ -72,6 +72,5 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(port, hostname, () => {
-  // eslint-disable-next-line no-console
   console.log(`web listening on http://${hostname}:${port} (relay ws enabled)`);
 });

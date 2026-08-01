@@ -23,4 +23,8 @@ NODE_ENV=production node apps/worker/dist/index.js   # needs DATABASE_URL + a ru
 The browser is driven via the official `cloakbrowser` package (`@uc/connectors/browser`),
 which auto-manages the Chromium binary — pre-downloaded into the Docker image at build, or
 downloaded on first launch (~535MB, cached under `CLOAKBROWSER_CACHE_DIR`). Needs Xvfb + an
-x86_64 host. Optional `CLOAKBROWSER_LICENSE_KEY` for Pro. See `deploy/Dockerfile.worker`.
+x86_64 host. Optional `CLOAKBROWSER_LICENSE_KEY` for Pro. See `deploy/Dockerfile.app`.
+
+In the packaged deployment the worker is not a container of its own: `deploy/entrypoint.mjs`
+runs it alongside the web portal in the single `app` container, so the relay leg between them is
+a loopback connection.

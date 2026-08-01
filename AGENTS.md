@@ -250,10 +250,12 @@ Operational hardening + automated full test suite. `spec`/`tasks` under
 - **CI** `.github/workflows/ci.yml`: on push/PR, `pnpm install --frozen-lockfile` → `pnpm
   build` → web typecheck → `pnpm test` (with a Postgres service + `DATABASE_URL_TEST`, so the
   gated integration tests run) → web production build. This is the automated "all tests" gate.
-- `docker compose up`: one-shot **migrate** service (worker image, `node
-  packages/db/dist/migrate.js`) applies migrations+seed before web/worker (they
-  `depends_on ... service_completed_successfully`).
-- **`GET /api/health`** (DB reachability, unauth) + web container healthcheck.
+- `docker compose up`: **two** containers, `postgres` + `app`. `deploy/entrypoint.mjs` is the
+  app's PID 1 and runs Xvfb → migrations (`node packages/db/dist/migrate.js`) → browser download
+  → web + worker, supervised by `supervise()` in `packages/core/src/supervisor.ts` (a child that
+  dies takes the container down; SIGTERM reaches both). Single published image, `uc-app`.
+- **`GET /api/health`** (DB reachability, unauth) + app container healthcheck (long
+  `start_period`: the first boot downloads ~200MB of browser before the portal listens).
 - Root `verify` script (build + web typecheck + tests) — needs `pnpm` on PATH (CI/dev; this
   sandbox has no global pnpm so run steps individually via `corepack pnpm`).
 - Self-host quickstart: README section + `docs/operations/deploy.md`.

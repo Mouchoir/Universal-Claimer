@@ -1,12 +1,18 @@
-# Automation worker. Runs CloakBrowser (source-patched Chromium) HEADED under Xvfb on a
-# headless host. x86_64 only.
+# The whole application in one image: the web portal and the claim worker, run side by side by
+# deploy/entrypoint.mjs. They were two images and two services until it became clear that a
+# four-container stack (postgres + migrate + web + worker) is a lot of moving parts to hand an
+# operator for a single-user deployment, and that only postgres genuinely needs its own lifecycle.
+#
+# Runs CloakBrowser (source-patched Chromium) HEADED under Xvfb on a headless host. x86_64 only.
 FROM node:20-bookworm-slim AS build
 RUN corepack enable
 WORKDIR /app
 COPY . .
 RUN corepack pnpm install --frozen-lockfile
-# Building the worker also builds its referenced workspace packages (tsc -b).
-RUN corepack pnpm --filter @uc/worker build
+# Next build for the portal, tsc -b for the worker; each also builds the workspace packages it
+# references, which together cover everything the entrypoint runs.
+RUN corepack pnpm --filter "@uc/web..." build \
+    && corepack pnpm --filter @uc/worker build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -27,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxi6 libxtst6 libexpat1 libdbus-1-3 libudev1 \
     && rm -rf /var/lib/apt/lists/*
 
+# The whole built workspace (node_modules + packages' dist + the web .next build). The custom
+# web server requires node_modules at runtime (next, ws, @uc/*), so Next's standalone tracing is
+# not used here.
 COPY --from=build /app ./
 
 # The CloakBrowser Chromium is fetched at *runtime* into a cache directory, not baked into the
@@ -48,17 +57,12 @@ RUN CLOAKBROWSER_CACHE_DIR=/tmp/cb-verify \
     && echo "chromium launches" \
     && rm -rf /tmp/cb-verify
 
+EXPOSE 8080
+ENV PORT=8080
+ENV HOST=0.0.0.0
 ENV DISPLAY=:99
-# Start Xvfb ourselves and `exec` the worker, rather than wrapping it in `xvfb-run`.
-# xvfb-run swallowed the worker's stdout, so `docker logs` showed nothing at all — on a headless
-# NAS that leaves the operator with no way to diagnose anything. exec'ing also makes node PID 1's
-# process, so `docker stop` delivers SIGTERM to the worker instead of to a wrapper script.
-# The short wait lets the display socket appear before the first browser launch.
-# Fetching the browser before the worker starts (rather than lazily on the first claim) means a
-# download failure shows up immediately in the logs instead of as a mysteriously failed claim.
-# It is a no-op once the cache volume is populated.
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & \
-for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done; \
-echo 'ensuring the browser is present…'; \
-corepack pnpm --filter @uc/connectors exec cloakbrowser install || { echo 'browser download failed'; exit 1; }; \
-exec node apps/worker/dist/index.js"]
+# The entrypoint is exec'd directly, so node is PID 1 and `docker stop` delivers SIGTERM to the
+# supervisor rather than to a wrapper script that would swallow it. It also keeps stdout
+# unbuffered and unwrapped: an earlier `xvfb-run` wrapper hid the worker's logs entirely, which
+# on a headless NAS leaves the operator with nothing to diagnose.
+CMD ["node", "deploy/entrypoint.mjs"]

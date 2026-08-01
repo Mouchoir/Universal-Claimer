@@ -7,3 +7,4 @@ export * from "./proxy.js";
 export * from "./relay.js";
 export * from "./relay-ticket.js";
 export * from "./relay-bridge.js";
+export * from "./supervisor.js";
