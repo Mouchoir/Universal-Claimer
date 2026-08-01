@@ -112,6 +112,50 @@ input[type="radio"] {
   accent-color: var(--uc-primary);
 }
 
+/* Persistent navigation for the signed-in pages. Sits above the page content in the container,
+   so every page has a way home without having to provide one itself. */
+.uc-header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--uc-space) * 2);
+  padding-bottom: calc(var(--uc-space) * 2);
+  margin-bottom: calc(var(--uc-space) * 2);
+  border-bottom: 1px solid var(--uc-border);
+  flex-wrap: wrap;
+}
+.uc-brand {
+  font-weight: 600;
+  color: var(--uc-text);
+  text-decoration: none;
+}
+.uc-brand:hover {
+  color: var(--uc-primary);
+}
+.uc-nav {
+  display: flex;
+  gap: calc(var(--uc-space) * 2);
+  /* Pushes sign-out to the far end, away from the navigation it is not part of. */
+  margin-right: auto;
+}
+.uc-nav a {
+  color: var(--uc-text-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+.uc-nav a:hover {
+  color: var(--uc-text);
+}
+.uc-nav a.uc-nav-current {
+  color: var(--uc-text);
+  /* Not colour alone: the current page stays identifiable without relying on hue. */
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.uc-header button {
+  padding: 4px 12px;
+  font-size: 14px;
+}
+
 /* The relay stage: the live view plus every control that must stay reachable while it fills the
    screen. Native fullscreen renders only the fullscreen element's subtree, so the toolbar and
    the hidden keyboard-capture textarea live inside this container rather than beside it. */

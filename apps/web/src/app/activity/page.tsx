@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isAuthenticated } from "@/server/session-cookie";
 import { ActivityView } from "./ActivityView";
@@ -10,12 +9,8 @@ export default function ActivityPage() {
 
   return (
     <main>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-        <h1>Activity</h1>
-        <Link href="/dashboard" style={{ fontSize: 14 }}>
-          ← Dashboard
-        </Link>
-      </div>
+      {/* The way back lives in the header now, next to the tab for this very page. */}
+      <h1>Activity</h1>
       <p style={{ color: "var(--uc-text-muted)", marginTop: -4 }}>
         What ran, when, how it went, and what it actually obtained.
       </p>
