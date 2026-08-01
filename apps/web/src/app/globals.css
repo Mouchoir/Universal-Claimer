@@ -112,6 +112,25 @@ input[type="radio"] {
   accent-color: var(--uc-primary);
 }
 
+/* A secret field plus its reveal toggle. The toggle is quiet on purpose: it sits inside a form
+   whose primary action is a filled button, and must not compete with it. */
+.uc-secret {
+  display: flex;
+  gap: var(--uc-space);
+  align-items: center;
+}
+.uc-secret > button {
+  flex: none;
+  min-width: 62px;
+  background: transparent;
+  border-color: var(--uc-border);
+  color: var(--uc-text-muted);
+}
+.uc-secret > button:hover:not(:disabled) {
+  color: var(--uc-text);
+  filter: none;
+}
+
 textarea {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

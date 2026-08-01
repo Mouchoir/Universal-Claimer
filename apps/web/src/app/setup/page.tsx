@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AnswerInput, PasswordInput } from "@/components/secret-inputs";
 
 interface QA {
   question: string;
@@ -59,12 +60,12 @@ export default function SetupPage() {
       <form className="uc-card" style={{ marginTop: 16, display: "grid", gap: 16 }} onSubmit={submit}>
         <label style={{ display: "grid", gap: 4 }}>
           <span>Admin password (min 8 characters)</span>
-          <input
-            type="password"
+          <PasswordInput
             value={password}
             minLength={8}
             required
-            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            onChange={setPassword}
           />
         </label>
 
@@ -84,31 +85,38 @@ export default function SetupPage() {
           </p>
         )}
 
-        {enableRecovery &&
-          questions.map((qa, i) => (
-            <div key={i} style={{ display: "grid", gap: 4 }}>
-              <input
-                placeholder={`Security question ${i + 1}`}
-                value={qa.question}
-                required
-                onChange={(e) => {
-                  const next = [...questions];
-                  next[i] = { ...next[i]!, question: e.target.value };
-                  setQuestions(next);
-                }}
-              />
-              <input
-                placeholder="Answer"
-                value={qa.answer}
-                required
-                onChange={(e) => {
-                  const next = [...questions];
-                  next[i] = { ...next[i]!, answer: e.target.value };
-                  setQuestions(next);
-                }}
-              />
-            </div>
-          ))}
+        {enableRecovery && (
+          <>
+            <p style={{ color: "var(--uc-text-muted)", margin: 0 }}>
+              The questions are shown again when resetting; the answers are hashed and are not
+              case-sensitive.
+            </p>
+            {questions.map((qa, i) => (
+              <div key={i} style={{ display: "grid", gap: 4 }}>
+                <input
+                  placeholder={`Security question ${i + 1}`}
+                  value={qa.question}
+                  required
+                  onChange={(e) => {
+                    const next = [...questions];
+                    next[i] = { ...next[i]!, question: e.target.value };
+                    setQuestions(next);
+                  }}
+                />
+                <AnswerInput
+                  placeholder="Answer"
+                  value={qa.answer}
+                  required
+                  onChange={(value) => {
+                    const next = [...questions];
+                    next[i] = { ...next[i]!, answer: value };
+                    setQuestions(next);
+                  }}
+                />
+              </div>
+            ))}
+          </>
+        )}
 
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input

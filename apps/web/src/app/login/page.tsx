@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { PasswordInput } from "@/components/secret-inputs";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,12 +37,7 @@ export default function LoginPage() {
       <form className="uc-card" style={{ marginTop: 16, display: "grid", gap: 16 }} onSubmit={submit}>
         <label style={{ display: "grid", gap: 4 }}>
           <span>Admin password</span>
-          <input
-            type="password"
-            value={password}
-            required
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <PasswordInput value={password} required autoFocus onChange={setPassword} />
         </label>
         {error && <p style={{ color: "var(--uc-danger)" }}>{error}</p>}
         <button type="submit" disabled={busy}>
