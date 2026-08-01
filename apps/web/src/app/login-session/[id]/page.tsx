@@ -60,7 +60,17 @@ export default function LoginSessionPage() {
     requestAnimationFrame(() => focusCapture());
   }, [focusCapture]);
   const stage = useExpandable(stageRef, refocus);
-  const { escapeExits, collapse: collapseStage } = stage;
+  const { expanded, escapeExits, collapse: collapseStage } = stage;
+
+  // Focus is the whole game here: the instant the capture textarea loses it, every keystroke
+  // goes to whatever took it — the Fullscreen button, most likely, since clicking it is what
+  // caused the change. Keyed on the expanded state rather than on the hook's callback, so
+  // keyboard capture comes back even if some future path forgets to signal its transition.
+  useEffect(() => {
+    if (!embedRelay || status !== "awaiting_user") return;
+    const frame = requestAnimationFrame(() => focusCapture());
+    return () => cancelAnimationFrame(frame);
+  }, [expanded, embedRelay, status, focusCapture]);
 
   // Poll status (drives the redirect on success and reveals the deployment mode).
   useEffect(() => {
@@ -311,6 +321,8 @@ export default function LoginSessionPage() {
             className={stage.expanded && !stage.nativeFullscreen ? "uc-stage uc-stage-expanded" : "uc-stage"}
           >
             <div className="uc-stage-bar">
+              {/* The button keeps focus after a click; the effect above takes it back so the
+                  next keystroke reaches the remote page rather than re-triggering this. */}
               <button type="button" className="uc-quiet" onClick={stage.toggle}>
                 {stage.expanded ? "Exit fullscreen" : "Fullscreen"}
               </button>
