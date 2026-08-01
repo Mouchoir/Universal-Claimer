@@ -22,10 +22,24 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
+        // refresh() as well as push(): the dashboard is a server component that reads the
+        // session cookie, and the client router would otherwise be free to serve a cached
+        // pre-login render of it.
+        router.refresh();
         router.push("/dashboard");
         return;
       }
-      setError("Incorrect password.");
+      const data = await res.json().catch(() => null);
+      setError(
+        data?.error?.code === "RATE_LIMITED"
+          ? "Too many attempts. Try again in a few minutes."
+          : "Incorrect password.",
+      );
+    } catch {
+      // Anything that is not an HTTP response at all — server down, connection dropped. Without
+      // this the promise rejected, the form reset itself, and clicking Sign in looked like it
+      // did nothing whatsoever.
+      setError("Could not reach the server. Check that the app container is running.");
     } finally {
       setBusy(false);
     }
