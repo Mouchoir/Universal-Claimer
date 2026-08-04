@@ -35,6 +35,20 @@ export const admin = pgTable(
   (t) => ({ singletonUq: uniqueIndex("admin_singleton_uq").on(t.singleton) }),
 );
 
+/**
+ * Small key/value store for deployment-level facts that are neither configuration the operator
+ * types nor per-account data: the fingerprint of the encryption key this database was written
+ * with, and the last release whose notes have been shown.
+ *
+ * In the database rather than a file because both must survive the container being replaced,
+ * which is the whole point of the things being recorded here.
+ */
+export const appSetting = pgTable("app_setting", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const securityQuestion = pgTable("security_question", {
   id: uuid("id").defaultRandom().primaryKey(),
   position: smallint("position").notNull(), // 1..3

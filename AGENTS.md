@@ -251,9 +251,15 @@ Operational hardening + automated full test suite. `spec`/`tasks` under
   build` → web typecheck → `pnpm test` (with a Postgres service + `DATABASE_URL_TEST`, so the
   gated integration tests run) → web production build. This is the automated "all tests" gate.
 - `docker compose up`: **two** containers, `postgres` + `app`. `deploy/entrypoint.mjs` is the
-  app's PID 1 and runs Xvfb → migrations (`node packages/db/dist/migrate.js`) → browser download
-  → web + worker, supervised by `supervise()` in `packages/core/src/supervisor.ts` (a child that
-  dies takes the container down; SIGTERM reaches both). Single published image, `uc-app`.
+  app's PID 1 and runs secrets bootstrap → Xvfb → preflight (`node packages/db/dist/migrate.js`:
+  migrations, seed, key check) → browser download → web + worker, supervised by `supervise()` in
+  `packages/core/src/supervisor.ts` (a child that dies takes the container down; SIGTERM reaches
+  both). Single published image, `uc-app`.
+- **Secrets survive updates.** `APP_ENCRYPTION_KEY`/`RELAY_TOKEN` resolve env → `uc_config`
+  volume → generate-and-persist (`packages/core/src/bootstrap-secrets.ts`), so the stack file
+  carries none. The key's fingerprint is stored in `app_setting` and checked at boot
+  (`assertMasterKeyMatches`): a swapped key refuses to start rather than silently making every
+  stored session undecryptable.
 - **`GET /api/health`** (DB reachability, unauth) + app container healthcheck (long
   `start_period`: the first boot downloads ~200MB of browser before the portal listens).
 - Root `verify` script (build + web typecheck + tests) — needs `pnpm` on PATH (CI/dev; this

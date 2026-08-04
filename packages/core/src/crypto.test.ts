@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EncryptionKeyMismatchError,
   loadMasterKey,
+  masterKeyFingerprint,
   openSecret,
   openSecretString,
   safeEqual,
@@ -55,6 +56,30 @@ describe("sealSecret / openSecret", () => {
     const sealed = sealSecret("x", masterKey);
     sealed.ciphertext[sealed.ciphertext.length - 1] ^= 0xff;
     expect(() => openSecret(sealed, masterKey)).toThrow(EncryptionKeyMismatchError);
+  });
+});
+
+describe("masterKeyFingerprint", () => {
+  it("is stable for the same key", () => {
+    expect(masterKeyFingerprint(masterKey)).toBe(masterKeyFingerprint(masterKey));
+  });
+
+  it("differs for a different key", () => {
+    // The whole point: this is what catches a redeploy that regenerated the key.
+    expect(masterKeyFingerprint(masterKey)).not.toBe(masterKeyFingerprint(randomBytes(32)));
+  });
+
+  it("differs when a single bit of the key changes", () => {
+    const near = Buffer.from(masterKey);
+    near[0] ^= 0x01;
+    expect(masterKeyFingerprint(near)).not.toBe(masterKeyFingerprint(masterKey));
+  });
+
+  it("does not leak the key material", () => {
+    const fp = masterKeyFingerprint(masterKey);
+    expect(fp).toMatch(/^[0-9a-f]{32}$/);
+    expect(fp).not.toContain(masterKey.toString("hex"));
+    expect(masterKey.toString("hex")).not.toContain(fp);
   });
 });
 

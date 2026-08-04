@@ -27,16 +27,22 @@ services:
       dockerfile: deploy/Dockerfile.app
     environment:
       DATABASE_URL: postgres://uc:uc@postgres:5432/uc
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in deploy/.env}
       PORT: 8080
       # Headless deployment: relay the login page into the wizard over the CDP screencast
       # WebSocket (docs/design/cdp-relay.md). RELAY_TOKEN guards the internal worker→web leg,
       # which is a loopback connection now that both run here.
       LOGIN_RELAY_EMBED: "true"
-      RELAY_TOKEN: ${RELAY_TOKEN:?set RELAY_TOKEN in deploy/.env}
+      # APP_ENCRYPTION_KEY and RELAY_TOKEN are deliberately absent: the app generates them on
+      # first boot and keeps them in the uc_config volume. Pinning them here still works and
+      # takes precedence, but leaving them out is what makes an update unable to lose them.
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      RELAY_TOKEN: ${RELAY_TOKEN:-}
     ports:
       - "${PORT:-8080}:8080"
     volumes:
+      # Generated secrets. Losing this volume loses the encryption key, and with it every stored
+      # account session — the app refuses to start on a mismatch rather than failing quietly.
+      - uc_config:/var/lib/uc
       # The ~200MB Chromium is downloaded on first boot; keep it across redeploys.
       - uc_browser:/var/lib/cloakbrowser
     depends_on:
@@ -58,4 +64,5 @@ services:
 
 volumes:
   uc_pgdata:
+  uc_config:
   uc_browser:

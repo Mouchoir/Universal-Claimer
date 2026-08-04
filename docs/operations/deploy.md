@@ -28,19 +28,44 @@ separate containers only made the stack harder to read in a Docker UI.
 `deploy/entrypoint.mjs` runs the startup steps in order, failing loudly at the first one that
 breaks rather than deferring the error to the first claim:
 
-1. start **Xvfb** — the worker runs Chromium headed for stealth, so it needs a display even on a
+1. resolve the **secrets** — `APP_ENCRYPTION_KEY` and `RELAY_TOKEN` — from the environment, then
+   from the `uc_config` volume, generating and persisting only what neither supplies,
+2. start **Xvfb** — the worker runs Chromium headed for stealth, so it needs a display even on a
    headless host,
-2. apply **migrations** (and seed services),
-3. fetch the **CloakBrowser** binary into `/var/lib/cloakbrowser`. ~200MB on first boot, then a
+3. apply **migrations**, seed services, and **verify the encryption key** is the one this database
+   was written with,
+4. fetch the **CloakBrowser** binary into `/var/lib/cloakbrowser`. ~200MB on first boot, then a
    no-op — mount the `uc_browser` volume and it survives redeploys,
-4. start the **web portal** and the **worker**, supervised together.
+5. start the **web portal** and the **worker**, supervised together.
 
 Supervision is a real supervisor, not `sh -c 'a & b'`: if either process dies the container exits
 non-zero so the restart policy fires, and `docker stop` reaches both so they close their database
 pools (`packages/core/src/supervisor.ts`).
 
 Open `http://<host>:<PORT>` and complete the first-run onboarding. Allow a couple of minutes on
-the very first boot — step 3 runs before the portal starts listening.
+the very first boot — step 4 runs before the portal starts listening.
+
+## Not losing your data on an update
+
+Three volumes, and losing either of the first two is what an update must never do:
+
+| volume | holds | if lost |
+|---|---|---|
+| `uc_pgdata` | accounts, schedules, history | everything, irrecoverably |
+| `uc_config` | the generated `APP_ENCRYPTION_KEY` | every stored account session becomes unreadable |
+| `uc_browser` | the Chromium binary | nothing; re-downloaded on next boot |
+
+The encryption key used to live only in the compose file, which for a Portainer stack means it is
+pasted into a web form. Redeploying with a regenerated key was silent and fatal: the app started
+normally and every stored session was undecryptable from then on. Now the key is generated once
+into `uc_config`, the stack file carries no secrets, and its fingerprint is recorded in the
+database — so a mismatched key stops the boot with an explanation instead of quietly corrupting
+access to every account.
+
+Setting `APP_ENCRYPTION_KEY` in the environment still works and takes precedence; the value is
+copied into the volume as well, so removing it later is harmless.
+
+To back up: the `uc_pgdata` and `uc_config` volumes together. Either alone is useless.
 
 ## Health
 
