@@ -5,6 +5,7 @@ import { getDb } from "@/server/context";
 import { isAuthenticated } from "@/server/session-cookie";
 import { ClaimPanel } from "./ClaimPanel";
 import { EnableConnector } from "./EnableConnector";
+import { RecoveryKey } from "./RecoveryKey";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,11 @@ export default async function DashboardPage() {
       </section>
 
       <ClaimPanel />
+
+      <section style={{ marginTop: 24 }}>
+        <h2>Backup</h2>
+        <RecoveryKey />
+      </section>
     </main>
   );
 }
