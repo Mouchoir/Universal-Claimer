@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 const ALGO = "aes-256-gcm";
 const IV_LEN = 12;
@@ -27,6 +33,22 @@ export function loadMasterKey(base64Key: string): Buffer {
     );
   }
   return key;
+}
+
+/**
+ * A stable, non-reversible identifier for a master key, so a deployment can tell whether the key
+ * it has been given is the one its stored data was encrypted with.
+ *
+ * Domain-separated and truncated: it is written to the database, and the point is to compare two
+ * keys for equality, not to publish anything that helps recover one. SHA-256 over a labelled
+ * input means this digest cannot be reused as, or confused with, any other hash of the same key.
+ */
+export function masterKeyFingerprint(masterKey: Buffer): string {
+  return createHash("sha256")
+    .update("uc-master-key-fingerprint:")
+    .update(masterKey)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function encryptWithKey(key: Buffer, plaintext: Buffer): Buffer {

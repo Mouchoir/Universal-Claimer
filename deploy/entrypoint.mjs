@@ -14,14 +14,18 @@
  * packages/core/src/supervisor.ts.
  */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 // Imported by path, not by package name: this file sits outside every workspace package, so
 // pnpm has not linked `@uc/core` into a node_modules directory above it.
-import { supervise } from "../packages/core/dist/index.js";
+import { bootstrapSecrets, supervise } from "../packages/core/dist/index.js";
 
 const DISPLAY = process.env.DISPLAY ?? ":99";
 const X_SOCKET = `/tmp/.X11-unix/X${DISPLAY.replace(":", "")}`;
+const CONFIG_DIR = process.env.UC_CONFIG_DIR ?? "/var/lib/uc";
+const SECRETS_FILE = join(CONFIG_DIR, "secrets.json");
 
 const log = (message, fields) =>
   console.log(
@@ -53,6 +57,29 @@ async function runToCompletion(name, command, args) {
   }
 }
 
+// Secrets first: everything downstream needs them in the environment, and getting APP_ENCRYPTION_KEY
+// wrong is the one mistake an update can make that destroys data. Resolved from the environment,
+// then from the config volume, and only generated when neither has them — see bootstrap-secrets.ts.
+mkdirSync(CONFIG_DIR, { recursive: true });
+const secrets = bootstrapSecrets(
+  process.env,
+  {
+    read: () => (existsSync(SECRETS_FILE) ? readFileSync(SECRETS_FILE, "utf8") : null),
+    // 0600: the file is the deployment's master key, and the volume may be browsable from the host.
+    write: (contents) => writeFileSync(SECRETS_FILE, contents, { mode: 0o600 }),
+  },
+  (kind) => randomBytes(32).toString(kind === "base64-32" ? "base64" : "hex"),
+);
+for (const [name, value] of Object.entries(secrets.values)) process.env[name] = value;
+if (secrets.generated.length > 0) {
+  log("generated missing secrets and persisted them", {
+    // Names only. Logging a value would put the master key in `docker logs`, where it is far
+    // easier to read than the 0600 file it was just written to.
+    names: secrets.generated,
+    file: SECRETS_FILE,
+  });
+}
+
 // Xvfb: the worker runs Chromium headed (best stealth) so it needs a display even though the
 // host has none. Supervised like the others — if it dies, every later claim would fail at launch.
 const xvfb = start("xvfb", "Xvfb", [DISPLAY, "-screen", "0", "1280x800x24", "-nolisten", "tcp"]);
@@ -63,8 +90,10 @@ if (!existsSync(X_SOCKET)) {
 }
 log("virtual display ready", { display: DISPLAY });
 
-await runToCompletion("migrate", "node", ["packages/db/dist/migrate.js"]);
-log("database schema up to date");
+// Migrations, catalog seed, and the check that this is the key the database was written with.
+// A mismatch stops the boot here rather than surfacing later as a series of unreadable accounts.
+await runToCompletion("preflight", "node", ["packages/db/dist/migrate.js"]);
+log("database ready and encryption key verified");
 
 // No-op once the cache volume is populated; the ~200MB download only happens on a fresh volume.
 await runToCompletion("browser", "corepack", [

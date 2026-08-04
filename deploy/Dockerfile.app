@@ -43,6 +43,9 @@ COPY --from=build /app ./
 # build whose terms are CloakHQ's to set, and it keeps the image far smaller. Mount a volume on
 # CLOAKBROWSER_CACHE_DIR and the ~200MB download happens once, not on every container start.
 ENV CLOAKBROWSER_CACHE_DIR=/var/lib/cloakbrowser
+# Where the deployment's generated secrets live. Mount a volume here or an update regenerates the
+# encryption key and every stored account session becomes unreadable (deploy/entrypoint.mjs).
+ENV UC_CONFIG_DIR=/var/lib/uc
 # For CloakBrowser Pro (latest Chromium), set CLOAKBROWSER_LICENSE_KEY in the environment.
 
 # Still verify at build time that this image can actually run Chromium — the missing-library

@@ -12,5 +12,6 @@ export * from "./login.js";
 export * from "./schedule.js";
 export * from "./claim-events.js";
 export * from "./activity.js";
+export * from "./app-settings.js";
 export * from "./seed.js";
 export { runMigrations } from "./migrate.js";
