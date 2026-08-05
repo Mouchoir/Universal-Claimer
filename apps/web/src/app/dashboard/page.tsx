@@ -6,6 +6,7 @@ import { isAuthenticated } from "@/server/session-cookie";
 import { ClaimPanel } from "./ClaimPanel";
 import { EnableConnector } from "./EnableConnector";
 import { RecoveryKey } from "./RecoveryKey";
+import { VersionPanel } from "./VersionPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,11 @@ export default async function DashboardPage() {
     <main>
       {/* Activity has its own tab in the header; a second link beside the title only repeats it. */}
       <h1>Dashboard</h1>
+
+      {/* Renders nothing when there is neither an unread note nor an update, which is most days. */}
+      <div style={{ marginTop: 16 }}>
+        <VersionPanel />
+      </div>
 
       <section style={{ marginTop: 16 }}>
         <h2>Services</h2>
