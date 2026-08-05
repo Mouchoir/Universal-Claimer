@@ -77,17 +77,28 @@ The dashboard checks the published releases hourly and shows two things: the not
 it is now running, once, and a banner for anything newer. The "seen" marker lives in the database,
 not the browser, so a note appears exactly once rather than once per machine you open it on.
 
-To make **Update now** work, set `UPDATE_WEBHOOK_URL` to a Portainer stack webhook (the stack's
-*Webhooks* section). A container cannot recreate itself, so applying an update means asking
-whatever owns it to redeploy.
+### Applying them
 
-That is deliberately a webhook rather than mounting `/var/run/docker.sock`. The socket would let
-the app apply updates directly, and would also hand any flaw in the app full control of the host's
-Docker daemon — a large price for saving one paste. A webhook grants exactly one capability:
-redeploy this stack.
+Nothing to configure: the stack includes an `updater` service that pulls the new image and
+recreates the app. It runs on a schedule — six hours by default, `UPDATE_INTERVAL_SECONDS` to
+change it, `0` to switch scheduled updates off — and also on demand, which is what **Update now**
+calls.
 
-Without it, updates are still detected and their notes shown; they just have to be applied by
-hand. The image tag does not change, so redeploying the stack is enough.
+A container cannot recreate itself, so something with access to the Docker daemon has to. That
+access is the whole reason the updater is its own service rather than a socket mounted into `app`:
+it has no exposed port, no dependencies of its own, and one job, while `app` is a public-facing
+server with a large dependency tree. Both arrangements grant the same power; one puts it behind
+far less surface.
+
+`--scope` confines the updater to containers carrying a matching label. Only `app` has it —
+postgres is pinned and a database is not something to restart on a timer.
+
+Updating never touches the volumes, so nothing is lost. A claim running at the moment of an update
+is interrupted and reconciled on the next start, the same as any restart.
+
+To use a Portainer stack webhook instead, point `UPDATE_WEBHOOK_URL` at it, set
+`UPDATE_WEBHOOK_METHOD=POST` — Portainer expects a POST where the updater's trigger is a GET —
+and delete the `updater` service.
 
 ## Health
 
