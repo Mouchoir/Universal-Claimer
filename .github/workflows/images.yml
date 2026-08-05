@@ -24,7 +24,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write, not read: this job publishes the release that tells a deployment an update exists.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
