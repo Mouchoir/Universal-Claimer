@@ -37,10 +37,15 @@ services:
       # takes precedence, but leaving them out is what makes an update unable to lose them.
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       RELAY_TOKEN: ${RELAY_TOKEN:-}
-      # Optional: a Portainer stack webhook, which is what makes the dashboard's "Update now"
-      # button able to redeploy this stack. Without it the update is still detected and reported,
-      # it just has to be applied by hand.
-      UPDATE_WEBHOOK_URL: ${UPDATE_WEBHOOK_URL:-}
+      # The updater below. Point this at a Portainer stack webhook instead if you prefer — then
+      # set UPDATE_WEBHOOK_METHOD to POST, which is what Portainer expects.
+      UPDATE_WEBHOOK_URL: ${UPDATE_WEBHOOK_URL:-http://updater:8080/v1/update}
+      UPDATE_WEBHOOK_METHOD: ${UPDATE_WEBHOOK_METHOD:-GET}
+      UPDATE_TOKEN: ${UPDATE_TOKEN:-universal-claimer-updater}
+    labels:
+      # Marks this container as the one the updater manages. Postgres deliberately has no such
+      # label: its tag is pinned, and a database is not something to restart on a timer.
+      com.centurylinklabs.watchtower.scope: universal-claimer
     ports:
       - "${PORT:-8080}:8080"
     volumes:
@@ -64,6 +69,34 @@ services:
       retries: 5
       # Generous: the first boot downloads the browser before the portal starts listening.
       start_period: 180s
+    restart: unless-stopped
+
+  # Applies updates, and nothing else. A container cannot recreate itself, so something with
+  # access to the Docker daemon has to do it — and that access is why this is a separate service
+  # rather than a socket mounted into `app`. This one has no exposed port, no dependencies of its
+  # own, and one job; `app` is a public-facing server with a large dependency tree, and handing
+  # that the host's daemon is a much larger bet for the same feature.
+  #
+  # `--scope` confines it to containers carrying the matching label, so it manages this stack's
+  # app and nothing else on the host.
+  updater:
+    image: containrrr/watchtower:1.7.1
+    environment:
+      WATCHTOWER_SCOPE: universal-claimer
+      # Poll on a schedule so updates land without anyone clicking anything. Set to 0 to disable
+      # and rely on the dashboard button alone.
+      WATCHTOWER_POLL_INTERVAL: ${UPDATE_INTERVAL_SECONDS:-21600}
+      # The dashboard's "Update now" button calls this. Periodic polls stay on alongside it.
+      WATCHTOWER_HTTP_API_UPDATE: "true"
+      WATCHTOWER_HTTP_API_PERIODIC_POLLS: "true"
+      # Guards an endpoint that is only reachable from inside this stack's own network, and whose
+      # single power is "update this stack". Override it if you like; the default is not a secret
+      # so much as a formality the API requires.
+      WATCHTOWER_HTTP_API_TOKEN: ${UPDATE_TOKEN:-universal-claimer-updater}
+      # Old image layers are large; without this a NAS fills up over a few updates.
+      WATCHTOWER_CLEANUP: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:
