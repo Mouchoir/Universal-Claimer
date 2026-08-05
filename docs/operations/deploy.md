@@ -67,6 +67,28 @@ copied into the volume as well, so removing it later is harmless.
 
 To back up: the `uc_pgdata` and `uc_config` volumes together. Either alone is useless.
 
+## Updates
+
+A version is one merge to `main`. The release workflow tags the commit and publishes a release
+whose body is the patch note — but only **after** the image has been pushed, so a release existing
+always means there is an image to install.
+
+The dashboard checks the published releases hourly and shows two things: the note for the version
+it is now running, once, and a banner for anything newer. The "seen" marker lives in the database,
+not the browser, so a note appears exactly once rather than once per machine you open it on.
+
+To make **Update now** work, set `UPDATE_WEBHOOK_URL` to a Portainer stack webhook (the stack's
+*Webhooks* section). A container cannot recreate itself, so applying an update means asking
+whatever owns it to redeploy.
+
+That is deliberately a webhook rather than mounting `/var/run/docker.sock`. The socket would let
+the app apply updates directly, and would also hand any flaw in the app full control of the host's
+Docker daemon — a large price for saving one paste. A webhook grants exactly one capability:
+redeploy this stack.
+
+Without it, updates are still detected and their notes shown; they just have to be applied by
+hand. The image tag does not change, so redeploying the stack is enough.
+
 ## Health
 
 - `GET /api/health` → `{ ok, db }` (200 when the DB is reachable, 503 otherwise).

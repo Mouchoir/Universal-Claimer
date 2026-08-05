@@ -43,6 +43,22 @@ jobs:
         id: img
         run: echo "name=${REGISTRY}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/uc-app" >> "$GITHUB_OUTPUT"
 
+      # A version is one merge to main. Date-ordered so a human can tell at a glance which of two
+      # is newer, with the sha so it points at an exact commit.
+      - name: Compute version and patch note
+        id: ver
+        run: |
+          echo "version=v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          # A `Patch note:` line in the merge commit is what the operator reads in the app. The
+          # commit subject is the fallback: better a terse accurate line than an empty release.
+          note=$(git log -1 --pretty=%B | sed -n 's/^Patch note:[[:space:]]*//p' | head -1)
+          [ -z "$note" ] && note=$(git log -1 --pretty=%s)
+          {
+            echo "note<<PATCHNOTE_EOF"
+            echo "$note"
+            echo "PATCHNOTE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -50,8 +66,22 @@ jobs:
           # x86_64 only: the CloakBrowser build the worker downloads is amd64.
           platforms: linux/amd64
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
           tags: |
             ${{ steps.img.outputs.name }}:latest
             ${{ steps.img.outputs.name }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Created only after a successful push, and that ordering is the point: the app treats a
+      # release as "an update you can install", so one must never exist for an image that does not.
+      - name: Publish the release
+        if: github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.ver.outputs.version }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.ver.outputs.version }}" \
+            --notes "${{ steps.ver.outputs.note }}"

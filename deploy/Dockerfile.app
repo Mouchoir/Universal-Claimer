@@ -60,6 +60,11 @@ RUN CLOAKBROWSER_CACHE_DIR=/tmp/cb-verify \
     && echo "chromium launches" \
     && rm -rf /tmp/cb-verify
 
+# Stamped by the release workflow. Left as "dev" for a local build, which is also how the update
+# check tells "I am running a published release" from "I am running something someone built".
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 EXPOSE 8080
 ENV PORT=8080
 ENV HOST=0.0.0.0

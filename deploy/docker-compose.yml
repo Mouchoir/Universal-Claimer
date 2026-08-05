@@ -37,6 +37,10 @@ services:
       # takes precedence, but leaving them out is what makes an update unable to lose them.
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       RELAY_TOKEN: ${RELAY_TOKEN:-}
+      # Optional: a Portainer stack webhook, which is what makes the dashboard's "Update now"
+      # button able to redeploy this stack. Without it the update is still detected and reported,
+      # it just has to be applied by hand.
+      UPDATE_WEBHOOK_URL: ${UPDATE_WEBHOOK_URL:-}
     ports:
       - "${PORT:-8080}:8080"
     volumes:
