@@ -79,10 +79,14 @@ jobs:
       # release as "an update you can install", so one must never exist for an image that does not.
       - name: Publish the release
         if: github.ref_name == 'main'
+        # Both values arrive as environment variables rather than being interpolated into the
+        # command with ${{ }}. Interpolation pastes the text into the script before the shell
+        # parses it, so a note containing a quote — `"Update now"` did exactly this — terminates
+        # the string early, and a crafted commit message could run arbitrary commands on the
+        # runner. As env vars the shell sees ordinary values it never re-parses.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          NOTE: ${{ steps.ver.outputs.note }}
         run: |
-          gh release create "${{ steps.ver.outputs.version }}" \
-            --target "$GITHUB_SHA" \
-            --title "${{ steps.ver.outputs.version }}" \
-            --notes "${{ steps.ver.outputs.note }}"
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes "$NOTE"
