@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { ExtensionSetup } from "./ExtensionSetup";
 
 export default function ConnectPage() {
   const router = useRouter();
@@ -209,6 +210,14 @@ export default function ConnectPage() {
             <button onClick={startAssisted} disabled={busy}>
               {busy ? "Starting…" : "Log in for me"}
             </button>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <ExtensionSetup
+              serviceId={serviceId}
+              config={config}
+              onConnected={() => router.push("/dashboard")}
+            />
           </div>
 
           <p style={{ color: "var(--uc-text-muted)", marginTop: 16 }}>Or connect manually:</p>
