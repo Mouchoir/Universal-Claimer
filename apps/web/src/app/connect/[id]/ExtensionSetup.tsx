@@ -50,6 +50,12 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
   const [browser, setBrowser] = useState<"firefox" | "chrome">("chrome");
   /** Set once the extension's bridge announces itself, which only happens on an allowed origin. */
   const [bridge, setBridge] = useState(false);
+  /** What the extension is doing right now. A silent button reads as a broken one. */
+  const [phase, setPhase] = useState<string | null>(null);
+  /** Shown when the extension is missing cookie access and the operator has to grant it. */
+  const [needsAccess, setNeedsAccess] = useState<{ service: string; domains: string[] } | null>(
+    null,
+  );
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => setBrowser(likelyBrowser()), []);
@@ -60,6 +66,7 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
     const onMessage = (event: MessageEvent) => {
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (event.data?.type === "uc-extension-ready") setBridge(true);
+      if (event.data?.type === "uc-extension-progress") setPhase(event.data.phase);
     };
     window.addEventListener("message", onMessage);
     window.postMessage({ type: "uc-extension-ready?" }, window.location.origin);
@@ -89,46 +96,18 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
       }
       const { token } = await res.json();
 
-      // With the bridge present this is genuinely one click: hand the token straight to the
-      // extension and wait for its answer, rather than explaining a three-step dance.
-      if (bridge) {
-        const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-          const onResult = (event: MessageEvent) => {
-            if (event.source !== window || event.origin !== window.location.origin) return;
-            if (event.data?.type !== "uc-extension-result") return;
-            window.removeEventListener("message", onResult);
-            resolve(event.data);
-          };
-          window.addEventListener("message", onResult);
-        });
-        // The URL still has to carry the token: the extension re-derives it from the tab to
-        // refuse a page asking for a pairing it was not issued.
-        const armedUrl = new URL(window.location.href);
-        armedUrl.searchParams.set("pair", token);
-        window.history.replaceState(null, "", armedUrl.toString());
-
-        window.postMessage(
-          { type: "uc-extension-connect", token, serviceId },
-          window.location.origin,
-        );
-        const result = await done;
-        if (result.ok) {
-          onConnected();
-          return;
-        }
-        setError(result.error ?? "The extension could not send the session.");
-        return;
-      }
-
-      // The token goes in the URL because that is the one thing the extension can read without
-      // any permission on this origin. replaceState rather than a navigation: reloading would
-      // throw away the React state the operator just filled in.
+      // The token goes in the URL on every path: it is the one thing the extension can read
+      // without permission on this origin, and even the bridge re-derives it from the tab to
+      // refuse a page asking for a pairing it was not issued. replaceState rather than a
+      // navigation — reloading would throw away what the operator just filled in.
       const url = new URL(window.location.href);
       url.searchParams.set("pair", token);
       window.history.replaceState(null, "", url.toString());
       setArmed(true);
 
-      // The extension posts straight to the API, so nothing tells this page it happened.
+      // Polling runs whichever route the session takes. The bridge reports back directly, but the
+      // popup route does not, and after a permission prompt the operator may well finish there —
+      // so the page watches the outcome rather than only the path it started down.
       pollRef.current = setInterval(async () => {
         const check = await fetch("/api/services").catch(() => null);
         if (!check?.ok) return;
@@ -138,12 +117,57 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
           onConnected();
         }
       }, 2000);
+
+      // With the bridge present the page drives the whole thing and narrates it.
+      if (bridge) {
+        setPhase("starting");
+        const result = await new Promise<{
+          ok: boolean;
+          error?: string;
+          needsAccess?: boolean;
+          service?: string;
+          domains?: string[];
+        }>((resolve) => {
+          const onResult = (event: MessageEvent) => {
+            if (event.source !== window || event.origin !== window.location.origin) return;
+            if (event.data?.type !== "uc-extension-result") return;
+            window.removeEventListener("message", onResult);
+            resolve(event.data);
+          };
+          window.addEventListener("message", onResult);
+          window.postMessage(
+            { type: "uc-extension-connect", token, serviceId },
+            window.location.origin,
+          );
+        });
+
+        setPhase(null);
+        if (result.ok) {
+          stopPolling();
+          onConnected();
+          return;
+        }
+        if (result.needsAccess) {
+          // Not an error: the browser will not let a page ask for a permission, so this is the
+          // one step that has to happen in the extension. Polling stays on, so finishing there
+          // moves this page along without it being asked again.
+          setNeedsAccess({ service: result.service ?? serviceId, domains: result.domains ?? [] });
+          return;
+        }
+        setError(result.error ?? "The extension could not send the session.");
+      }
     } catch {
       setError("Could not reach the server.");
     } finally {
       setBusy(false);
     }
   }
+
+  const PHASES: Record<string, string> = {
+    starting: "Asking the extension…",
+    reading: "Reading your cookies…",
+    sending: "Sending them to this instance…",
+  };
 
   const links = browser === "firefox" ? ["firefox", "chrome"] : ["chrome", "firefox"];
 
@@ -157,22 +181,35 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
         </div>
       </div>
 
-      {!armed ? (
+      {!armed || bridge ? (
         <>
           <button type="button" onClick={arm} disabled={busy}>
             {busy
-              ? bridge
-                ? "Fetching your session…"
-                : "Preparing…"
+              ? (phase && PHASES[phase]) || "Working…"
               : bridge
                 ? `Connect ${serviceId} now`
                 : "Set up with the extension"}
           </button>
-          {bridge && (
+
+          {bridge && !busy && !needsAccess && !error && (
             <p style={{ margin: 0, fontSize: 13, color: "var(--uc-text-muted)" }}>
               The extension is connected to this instance — one press does the rest.
             </p>
           )}
+
+          {needsAccess && (
+            <div className="uc-warning" style={{ fontSize: 14 }}>
+              <strong>The extension needs your permission first.</strong>
+              <div style={{ marginTop: 4 }}>
+                It cannot read {needsAccess.service} cookies until you allow it
+                {needsAccess.domains.length > 0 && <> for {needsAccess.domains.join(", ")}</>}. A
+                page is not allowed to ask on its behalf, so this one step happens in the
+                extension: press <strong>Send to this instance</strong> there and accept the
+                prompt. This page carries on by itself afterwards.
+              </div>
+            </div>
+          )}
+
           {error && <p style={{ color: "var(--uc-danger)", margin: 0, fontSize: 14 }}>{error}</p>}
         </>
       ) : (
