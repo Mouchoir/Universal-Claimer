@@ -48,9 +48,23 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [browser, setBrowser] = useState<"firefox" | "chrome">("chrome");
+  /** Set once the extension's bridge announces itself, which only happens on an allowed origin. */
+  const [bridge, setBridge] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => setBrowser(likelyBrowser()), []);
+
+  // Listen for the bridge, and ask for it: the content script announces on load, which may have
+  // been before this component mounted.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window || event.origin !== window.location.origin) return;
+      if (event.data?.type === "uc-extension-ready") setBridge(true);
+    };
+    window.addEventListener("message", onMessage);
+    window.postMessage({ type: "uc-extension-ready?" }, window.location.origin);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -74,6 +88,37 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
         return;
       }
       const { token } = await res.json();
+
+      // With the bridge present this is genuinely one click: hand the token straight to the
+      // extension and wait for its answer, rather than explaining a three-step dance.
+      if (bridge) {
+        const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          const onResult = (event: MessageEvent) => {
+            if (event.source !== window || event.origin !== window.location.origin) return;
+            if (event.data?.type !== "uc-extension-result") return;
+            window.removeEventListener("message", onResult);
+            resolve(event.data);
+          };
+          window.addEventListener("message", onResult);
+        });
+        // The URL still has to carry the token: the extension re-derives it from the tab to
+        // refuse a page asking for a pairing it was not issued.
+        const armedUrl = new URL(window.location.href);
+        armedUrl.searchParams.set("pair", token);
+        window.history.replaceState(null, "", armedUrl.toString());
+
+        window.postMessage(
+          { type: "uc-extension-connect", token, serviceId },
+          window.location.origin,
+        );
+        const result = await done;
+        if (result.ok) {
+          onConnected();
+          return;
+        }
+        setError(result.error ?? "The extension could not send the session.");
+        return;
+      }
 
       // The token goes in the URL because that is the one thing the extension can read without
       // any permission on this origin. replaceState rather than a navigation: reloading would
@@ -115,8 +160,19 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
       {!armed ? (
         <>
           <button type="button" onClick={arm} disabled={busy}>
-            {busy ? "Preparing…" : "Set up with the extension"}
+            {busy
+              ? bridge
+                ? "Fetching your session…"
+                : "Preparing…"
+              : bridge
+                ? `Connect ${serviceId} now`
+                : "Set up with the extension"}
           </button>
+          {bridge && (
+            <p style={{ margin: 0, fontSize: 13, color: "var(--uc-text-muted)" }}>
+              The extension is connected to this instance — one press does the rest.
+            </p>
+          )}
           {error && <p style={{ color: "var(--uc-danger)", margin: 0, fontSize: 14 }}>{error}</p>}
         </>
       ) : (
