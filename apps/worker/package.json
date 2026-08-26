@@ -13,9 +13,9 @@
     "@uc/core": "workspace:*",
     "@uc/db": "workspace:*",
     "@uc/notifications": "workspace:*",
-    "drizzle-orm": "^0.36.0",
-    "playwright-core": "^1.48.0",
-    "ws": "^8.21.1"
+    "drizzle-orm": "^0.45.2",
+    "playwright-core": "^1.62.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
