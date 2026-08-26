@@ -21,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # There is no checkout here — nothing needs the code — so gh cannot infer which repository
+      # the issue belongs to and falls back to reading git, which is not there. GH_REPO tells it
+      # outright and keeps the job checkout-free.
+      GH_REPO: ${{ github.repository }}
       UPSTREAM: claabs/epicgames-freegames-node
     steps:
       - name: Note any upstream release we have not seen
