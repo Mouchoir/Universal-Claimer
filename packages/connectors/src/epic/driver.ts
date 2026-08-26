@@ -5,6 +5,14 @@ import type { BrowserCookie, SessionHandle } from "../connector.js";
 export interface FreeGame {
   title: string;
   url: string;
+  /**
+   * Epic's own offer type — BASE_GAME, ADD_ON, BUNDLE, DLC…
+   *
+   * Kept because they do not behave alike at checkout, and a failure that does not say which
+   * kind it was leaves you guessing. An ADD_ON in particular is content for another game, and
+   * whether it can be claimed at all may depend on owning that game.
+   */
+  kind?: string;
 }
 
 /**
@@ -22,11 +30,16 @@ export interface EpicPageDriver {
   ): Promise<{ authenticated: boolean; captcha?: boolean }>;
   /** Free games claimable right now (title + product URL). */
   listClaimableGames(): Promise<FreeGame[]>;
-  /** Claim one game. Pass a solved captcha token on a retry after a challenge. */
+  /**
+   * Claim one game. Pass a solved captcha token on a retry after a challenge.
+   *
+   * `reason` carries whatever the store showed when the claim did not go through — the purchase
+   * button's own text, usually — so a failure can say more than that it failed.
+   */
   claimGame(
     game: FreeGame,
     captchaToken?: string,
-  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }>;
+  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean; reason?: string }>;
   /** The account's own display name on the service, if it can be read. */
   getUsername(): Promise<string | undefined>;
   /** Read the current cookies from the browser context (assisted login). */
@@ -51,6 +64,7 @@ const STORE_PRODUCT_BASE = "https://store.epicgames.com/en-US/p/";
 /** Shape of the fields we read from the promotions feed (everything else is ignored). */
 interface PromoElement {
   title?: string;
+  offerType?: string | null;
   productSlug?: string | null;
   urlSlug?: string | null;
   offerMappings?: { pageSlug?: string; pageType?: string }[] | null;
@@ -101,7 +115,11 @@ export function parseFreeGamesResponse(json: unknown, now: number): FreeGame[] {
       undefined;
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
-    out.push({ title: (e.title ?? slug).trim(), url: `${STORE_PRODUCT_BASE}${slug}` });
+    out.push({
+      title: (e.title ?? slug).trim(),
+      url: `${STORE_PRODUCT_BASE}${slug}`,
+      ...(e.offerType ? { kind: e.offerType } : {}),
+    });
   }
   return out;
 }
@@ -182,7 +200,7 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
 
   async claimGame(
     game: FreeGame,
-  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean }> {
+  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean; reason?: string }> {
     const page = await this.page();
     if (await this.isOwned(game.url)) return { claimed: false, alreadyOwned: true };
 
@@ -215,7 +233,11 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     // rather than claiming a phantom success.
     if (await this.isOwned(game.url)) return { claimed: true };
     if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
-    return { claimed: false };
+    // Say what the store actually showed. "Could not complete checkout" is true of a blocked
+    // purchase, of a page that never offered one, and of a claim that worked but whose ownership
+    // this code cannot recognise — three different problems that used to read identically, and
+    // the last one repeats every day while looking like a bug in the claiming.
+    return { claimed: false, reason: await this.ctaLabel().catch(() => undefined) };
   }
 
   /**
@@ -243,6 +265,15 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     if ((await cta.count().catch(() => 0)) === 0) return false;
     const label = ((await cta.textContent().catch(() => "")) ?? "").toLowerCase();
     return /in library|owned|installer|install|dans la biblioth|biblioth[eè]que/i.test(label);
+  }
+
+  /** The purchase button's current text, which is the store's own account of where this ended. */
+  private async ctaLabel(): Promise<string | undefined> {
+    const page = await this.page();
+    const cta = page.locator("[data-testid='purchase-cta-button']").first();
+    if ((await cta.count().catch(() => 0)) === 0) return "no purchase button on the page";
+    const label = ((await cta.textContent().catch(() => "")) ?? "").trim();
+    return label || undefined;
   }
 
   /** Poll the page's frames for one whose URL matches, up to `timeoutMs`. */
