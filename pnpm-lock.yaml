@@ -137,8 +137,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       cloakbrowser:
-        specifier: ^0.4.11
-        version: 0.4.11(playwright-core@1.61.1)
+        specifier: ^0.5.9
+        version: 0.5.9(playwright-core@1.61.1)
       otplib:
         specifier: ^12.0.1
         version: 12.0.1
@@ -1460,8 +1460,8 @@ packages:
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
 
-  cloakbrowser@0.4.11:
-    resolution: {integrity: sha512-a8lY+8RBWVycX61255SPdi+30kEfgiRZjmZ4cWxxCJVlSQ0by+HcUfyAu+QXo71IpCiKll3Ci5CRfwdC8enP2w==}
+  cloakbrowser@0.5.9:
+    resolution: {integrity: sha512-vMLX6sxLoA9OWutHrT1h7fYKPm/YZdGcPaanOTXMimG4U9jg9wc2hqI/VsFo9Nzel/ab82nWZhfQal18tKw6pQ==}
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
@@ -3274,7 +3274,7 @@ snapshots:
 
   client-only@0.0.1: {}
 
-  cloakbrowser@0.4.11(playwright-core@1.61.1):
+  cloakbrowser@0.5.9(playwright-core@1.61.1):
     dependencies:
       tar: 7.5.20
     optionalDependencies:

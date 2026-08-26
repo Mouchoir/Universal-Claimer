@@ -1,0 +1,66 @@
+name: Upstream watch
+
+# The connectors scrape stores that change without warning, and the failure mode is a claim that
+# silently stops working. claabs/epicgames-freegames-node solves the same Epic problem and fixes
+# breakages fast, so its releases are an early warning we would otherwise get from our own
+# failures — days later, with less to go on.
+#
+# This only opens an issue. Nothing here changes code: what upstream did still has to be read and
+# judged against our own implementation, which is deliberately different in places.
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Monday morning, before the week's claims matter
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      UPSTREAM: claabs/epicgames-freegames-node
+    steps:
+      - name: Note any upstream release we have not seen
+        run: |
+          set -euo pipefail
+
+          if ! gh release view --repo "$UPSTREAM" --json tagName,url,body > release.json 2>/dev/null; then
+            echo "No readable release upstream; nothing to do."
+            exit 0
+          fi
+
+          tag=$(jq -r .tagName release.json)
+          url=$(jq -r .url release.json)
+          title="Upstream $UPSTREAM released $tag"
+
+          # Keyed on the title so a re-run, or a second release in a week, never duplicates.
+          if gh issue list --search "$title in:title" --state all --json title --jq '.[].title' \
+              | grep -Fxq "$title"; then
+            echo "Already tracked: $title"
+            exit 0
+          fi
+
+          # Built as a file rather than an inline heredoc: nesting one inside a YAML block scalar
+          # indents its terminator, which bash then never matches — a failure that only shows up
+          # at run time.
+          {
+            echo "[$tag]($url) is out upstream."
+            echo
+            echo "Worth reading against \`packages/connectors/src/epic/\`: that project solves the"
+            echo "same problem and tends to meet Epic's changes first. A fix there often explains a"
+            echo "claim of ours that is about to start failing, or already has, quietly."
+            echo
+            echo "Ours differs on purpose in places — the promotions feed, the pinned en-US locale,"
+            echo "the ownership check — so this is a prompt to compare, not to copy."
+            echo
+            echo "<details><summary>Upstream release notes</summary>"
+            echo
+            jq -r '.body // "(no notes)"' release.json | head -c 4000
+            echo
+            echo "</details>"
+          } > issue.md
+
+          gh issue create --title "$title" --body-file issue.md
