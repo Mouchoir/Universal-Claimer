@@ -85,3 +85,67 @@ describe("parseFreeGamesResponse", () => {
     expect(parseFreeGamesResponse(null, NOW)).toEqual([]);
   });
 });
+
+describe("offer kinds", () => {
+  /**
+   * Shaped from the real feed entry that failed to claim on 26/08/2026: an ADD_ON for Albion
+   * Online, whose only offerMapping is a `pageType: "offer"` rather than a productHome.
+   */
+  const addOn = {
+    data: {
+      Catalog: {
+        searchStore: {
+          elements: [
+            {
+              title: "Epic Mage Bundle",
+              offerType: "ADD_ON",
+              productSlug: null,
+              urlSlug: "epic-mage-bundle",
+              offerMappings: [
+                { pageSlug: "albion-online-epic-mage-bundle-2ceb19", pageType: "offer" },
+              ],
+              catalogNs: { mappings: [{ pageSlug: "albion-online-7eb24d", pageType: "productHome" }] },
+              promotions: {
+                promotionalOffers: [
+                  {
+                    promotionalOffers: [
+                      {
+                        startDate: "2026-08-20T15:00:00.000Z",
+                        endDate: "2026-09-03T15:00:00.000Z",
+                        discountSetting: { discountPercentage: 0 },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  const NOW = Date.parse("2026-08-26T00:00:00.000Z");
+
+  it("keeps the offer type, so a failure can say what kind of thing it was", () => {
+    // Without this every add-on failure reads like the same unexplained checkout bug.
+    expect(parseFreeGamesResponse(addOn, NOW)[0]).toMatchObject({
+      title: "Epic Mage Bundle",
+      kind: "ADD_ON",
+    });
+  });
+
+  it("prefers the offer's own mapping over the parent product's", () => {
+    // catalogNs points at Albion Online itself; claiming that instead of the add-on would be a
+    // different thing entirely, and would silently look like it worked.
+    expect(parseFreeGamesResponse(addOn, NOW)[0]!.url).toContain(
+      "albion-online-epic-mage-bundle-2ceb19",
+    );
+  });
+
+  it("leaves kind unset when the feed omits it", () => {
+    const noType = JSON.parse(JSON.stringify(addOn));
+    delete noType.data.Catalog.searchStore.elements[0].offerType;
+    expect(parseFreeGamesResponse(noType, NOW)[0]!.kind).toBeUndefined();
+  });
+});

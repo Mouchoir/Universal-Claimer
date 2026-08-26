@@ -130,7 +130,16 @@ export class EpicConnector implements Connector, InteractiveLogin {
           }
         }
         if (res.claimed) claimed.push(game.title);
-        else if (!res.alreadyOwned) failed.push(game.title); // neither claimed nor already owned
+        else if (!res.alreadyOwned) {
+          // Record what the store showed, and what kind of offer this was. A promotion can be an
+          // ADD_ON or a BUNDLE rather than a game, and those do not check out like one — without
+          // saying so, every such failure looks like the same unexplained checkout bug and
+          // repeats daily with nothing new to go on.
+          const detail = [res.reason, game.kind && game.kind !== "BASE_GAME" ? game.kind : null]
+            .filter(Boolean)
+            .join(", ");
+          failed.push(detail ? `${game.title} (${detail})` : game.title);
+        }
       }
 
       if (claimed.length > 0) {
