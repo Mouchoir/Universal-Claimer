@@ -20,7 +20,7 @@
     "@uc/core": "workspace:*",
     "drizzle-orm": "^0.36.0",
     "pg": "^8.13.0",
-    "pg-boss": "^10.1.5"
+    "pg-boss": "^12.27.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",
