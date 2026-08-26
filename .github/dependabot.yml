@@ -1,0 +1,27 @@
+# Nothing watched dependencies until CloakBrowser — the stealth browser the whole automation
+# rests on — sat five minor versions behind for weeks, announcing it in every boot log while
+# `^0.4.11` guaranteed it would never update on its own (a caret pins the minor on 0.x).
+#
+# Minor and patch updates are grouped into one PR per ecosystem: a stream of individual PRs is
+# how this stops being read at all. Majors stay separate, because those are the ones that need
+# a decision rather than a merge.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # The actions in the release and image workflows age silently and are equally load-bearing:
+  # a deprecated runtime or a yanked action fails the build with no relation to the code.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: ["minor", "patch"]
