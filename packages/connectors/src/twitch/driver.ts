@@ -23,6 +23,11 @@ export interface TwitchPageDriver {
   getUsername(): Promise<string | undefined>;
   /** When the active Prime sub to `channel` ends (ISO), if one is active and readable. */
   getPrimeSubEnd(channel: string): Promise<string | undefined>;
+  /**
+   * Whether the account subscribes to `channel`, per Twitch's own subscription list.
+   * Null when Twitch could not be asked — the caller then falls back to reading the page.
+   */
+  isSubscribedTo(channel: string): Promise<boolean | null>;
   getCookies(): Promise<BrowserCookie[]>;
   goto(url: string): Promise<void>;
 }
@@ -83,6 +88,27 @@ export function parseSubscriptionBenefits(raw: string): SubscriptionInfo[] {
     });
   }
   return out;
+}
+
+/**
+ * Is one of these benefits an active subscription to `channel`?
+ *
+ * Twitch's `filter: ALL` returns lapsed benefits alongside live ones, so presence in the list
+ * says nothing on its own — an expired sub looks exactly like a current one until you read the
+ * date. A benefit with no end date is a permanent grant and counts.
+ */
+export function hasActiveSub(
+  subs: SubscriptionInfo[],
+  channel: string,
+  now: number = Date.now(),
+): boolean {
+  const wanted = channel.trim().toLowerCase();
+  return subs.some((s) => {
+    if (s.channel !== wanted) return false;
+    if (!s.endsAt) return true;
+    const end = Date.parse(s.endsAt);
+    return Number.isFinite(end) && end > now;
+  });
 }
 
 /**
@@ -166,7 +192,15 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
     // override, so this flow keys off `data-a-target` attributes, which Twitch keeps in English
     // no matter the display language — making it work for users in any locale. Visible-text
     // matching is kept only as a last-resort fallback.
-    if (await this.isSubscribed(page)) return { subscribed: false, alreadyActive: true };
+    // Ask Twitch before reading the page. The subscription list is authoritative and carries
+    // expiry dates; the page only shows affordances, and telling "subscribed" from "not" by
+    // which buttons are present is guesswork that has already been wrong in the direction that
+    // silently skips the renewal. The page is the fallback, for when the API cannot be reached.
+    const known = await this.isSubscribedTo(channel);
+    if (known === true) return { subscribed: false, alreadyActive: true };
+    if (known === null && (await this.isSubscribed(page))) {
+      return { subscribed: false, alreadyActive: true };
+    }
 
     const subBtn = await this.firstPresent(page, [
       "button[data-a-target='subscribe-button']",
@@ -222,7 +256,14 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
    * was not viable: Twitch's old /settings/subscriptions page redirects away and the remaining UI
    * exposes no machine-readable date. This is also fully language-independent.
    */
-  private async fetchSubscriptions(): Promise<SubscriptionInfo[]> {
+  /**
+   * The account's subscription benefits, or null when Twitch could not be asked.
+   *
+   * The difference matters: an empty list means "you are subscribed to nothing", while a failed
+   * call means "unknown". Collapsing both to `[]`, as this used to, turns a network hiccup into
+   * a confident wrong answer.
+   */
+  private async fetchSubscriptions(): Promise<SubscriptionInfo[] | null> {
     const page = await this.page();
     try {
       // The request must run from a twitch.tv origin so it carries the site's own context.
@@ -257,16 +298,26 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
         });
         return res.ok ? await res.text() : null;
       }, token);
-      return raw ? parseSubscriptionBenefits(raw) : [];
+      // A non-ok response yields null above, which is "could not ask" rather than "nothing".
+      return raw === null ? null : parseSubscriptionBenefits(raw);
     } catch {
-      return [];
+      return null;
     }
+  }
+
+  /**
+   * Whether the account currently subscribes to `channel`, according to Twitch itself.
+   * Null when Twitch could not be asked, so the caller can fall back rather than guess.
+   */
+  async isSubscribedTo(channel: string): Promise<boolean | null> {
+    const subs = await this.fetchSubscriptions();
+    return subs === null ? null : hasActiveSub(subs, channel);
   }
 
   /** When the active Prime sub to `channel` ends (ISO), if Twitch reports one. */
   async getPrimeSubEnd(channel: string): Promise<string | undefined> {
     const wanted = channel.trim().toLowerCase();
-    const subs = await this.fetchSubscriptions();
+    const subs = (await this.fetchSubscriptions()) ?? [];
     // Prefer the Prime-purchased entry for this channel; fall back to any sub to it.
     const match =
       subs.find((s) => s.channel === wanted && s.purchasedWithPrime) ??
@@ -311,7 +362,9 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
     const subscribedMarker = await this.firstPresent(page, [
       "[data-a-target='subscribed-button']",
       "[data-a-target='manage-subscription-button']",
-      "[data-a-target='subscription-gift-button']",
+      // Deliberately NOT the gift button: Twitch shows that to everyone, because anyone may gift
+      // a sub to a channel they have never subscribed to. Treating it as proof of a subscription
+      // reported a lapsed account as active, and skipped the renewal it was there to perform.
     ]);
     return subscribedMarker !== null;
   }
