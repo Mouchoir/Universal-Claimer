@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSubscriptionBenefits } from "../src/twitch/driver.js";
+import { hasActiveSub, parseSubscriptionBenefits } from "../src/twitch/driver.js";
 
 /** Shaped like a real SubscriptionsManager_User response (batched array, as Twitch returns it). */
 function response(nodes: unknown[]) {
@@ -57,5 +57,48 @@ describe("parseSubscriptionBenefits", () => {
     expect(parseSubscriptionBenefits("[]")).toEqual([]);
     expect(parseSubscriptionBenefits(JSON.stringify([{ data: {} }]))).toEqual([]);
     expect(parseSubscriptionBenefits(JSON.stringify({ errors: [{ message: "unauthorized" }] }))).toEqual([]);
+  });
+});
+
+describe("hasActiveSub", () => {
+  const NOW = Date.parse("2026-08-31T23:00:00.000Z");
+  const sub = (channel: string, endsAt?: string, prime = true) => ({
+    channel,
+    ...(endsAt ? { endsAt } : {}),
+    purchasedWithPrime: prime,
+  });
+
+  it("is false for a sub that has already ended", () => {
+    // The case reported on 31/08/2026: the account had lapsed and Twitch was offering
+    // "Se réabonner", while the connector reported the sub as active and skipped the renewal.
+    expect(hasActiveSub([sub("emptyprofile", "2026-08-16T21:13:40.000Z")], "emptyprofile", NOW))
+      .toBe(false);
+  });
+
+  it("is true while the benefit still runs", () => {
+    expect(hasActiveSub([sub("emptyprofile", "2026-09-16T21:13:40.000Z")], "emptyprofile", NOW))
+      .toBe(true);
+  });
+
+  it("counts a benefit with no end date as permanent", () => {
+    expect(hasActiveSub([sub("overwatchleague_2018")], "overwatchleague_2018", NOW)).toBe(true);
+  });
+
+  it("ignores other channels, however active", () => {
+    expect(hasActiveSub([sub("someoneelse", "2027-01-01T00:00:00.000Z")], "emptyprofile", NOW))
+      .toBe(false);
+  });
+
+  it("matches the channel case-insensitively and ignores padding", () => {
+    expect(hasActiveSub([sub("emptyprofile", "2026-09-16T21:13:40.000Z")], "  EmptyProfile ", NOW))
+      .toBe(true);
+  });
+
+  it("is false on an empty list", () => {
+    expect(hasActiveSub([], "emptyprofile", NOW)).toBe(false);
+  });
+
+  it("ignores an unparseable end date rather than treating it as active", () => {
+    expect(hasActiveSub([sub("emptyprofile", "not-a-date")], "emptyprofile", NOW)).toBe(false);
   });
 });

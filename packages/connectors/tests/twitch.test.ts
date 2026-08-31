@@ -29,6 +29,8 @@ function fakeDriver(over: Partial<TwitchPageDriver>): TwitchPageDriver {
     resubWithPrime: async () => ({ subscribed: true }),
     getUsername: async () => "ExampleUser",
     getPrimeSubEnd: async () => "2026-08-25T00:00:00.000Z",
+    // null = "Twitch could not be asked", which is what a fake with no opinion should say.
+    isSubscribedTo: async () => null,
     getCookies: async () => [],
     goto: async () => {},
     ...over,
