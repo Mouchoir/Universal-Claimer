@@ -91,6 +91,16 @@ function toAuthInput(method: LoadedAccount["method"], secretJson: string): AuthI
  * the account secret, run the connector, persist the outcome, flag re-auth if needed, and
  * record the run for the health monitor. Always finishes the job — even on error.
  */
+/** One-line, bounded description of an error, for a summary read in a list of runs. */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return "unknown";
+  // Collapsed onto one line rather than truncated at the first: a Playwright error puts the
+  // useful part — the selector, the timeout that expired — on the lines after its summary.
+  const flat = (err.message || err.name || "unknown").replace(/\s+/g, ' ').trim();
+  // Bounded because this lands in the run history beside every other line.
+  return flat.length > 200 ? `${flat.slice(0, 197)}…` : flat || err.name;
+}
+
 export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void> {
   await deps.markRunning(job.jobId);
 
@@ -116,7 +126,14 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
   try {
     result = await connector.claim(input, account.fingerprint, account.config, ctx);
   } catch (err) {
-    result = { outcome: "failed", summary: `claim error: ${err instanceof Error ? err.name : "unknown"}` };
+    // The message, not the name. `err.name` is "Error" for anything thrown without a subclass,
+    // which is most things — so every unexpected failure read as "claim error: Error" and told
+    // the operator nothing at all. Playwright's messages, by contrast, name the selector and the
+    // timeout that expired.
+    //
+    // Truncated because a stack-laden message would swamp the run history it is displayed in,
+    // and the first line is where the cause is.
+    result = { outcome: "failed", summary: `claim error: ${describeError(err)}` };
   }
 
   // Record history + account facts before branching on the outcome, so facts observed during a

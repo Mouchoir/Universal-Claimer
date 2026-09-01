@@ -154,9 +154,14 @@ export class TwitchConnector implements Connector, InteractiveLogin {
           accountFacts,
         };
       }
+      // Reaching here means the resub did not happen and nothing explained it as a no-op. That
+      // is a failure, not "nothing to do": the whole point of this connector is the renewal, and
+      // reporting a skipped one as success is how it went unnoticed.
       return {
-        outcome: "nothing_to_claim",
-        summary: `Nothing to do for "${channel}".`,
+        outcome: "failed",
+        summary: res.reason
+          ? `Could not renew the Prime sub to "${channel}": ${res.reason}.`
+          : `Could not renew the Prime sub to "${channel}".`,
         accountFacts,
       };
     } finally {
