@@ -6,6 +6,8 @@ export interface ResubResult {
   alreadyActive?: boolean;
   captcha?: boolean;
   notFound?: boolean;
+  /** Why nothing happened, when it was not because the sub is already running. */
+  reason?: string;
 }
 
 /** Page-interaction surface the Twitch connector needs; faked in contract tests. */
@@ -205,10 +207,22 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
     const subBtn = await this.firstPresent(page, [
       "button[data-a-target='subscribe-button']",
       "[data-a-target='subscribe-button']",
+      // A lapsed subscriber is offered "Resubscribe", which is a different control from the
+      // first-time "Subscribe" one. Matching the family covers both without having to know
+      // every name Twitch uses — minus the gift button, which is shown to everyone, and minus
+      // the subscribed marker, which would mean we should not be here at all.
+      "button[data-a-target*='subscribe']:not([data-a-target*='gift']):not([data-a-target='subscribed-button'])",
+      "[data-a-target*='subscribe']:not([data-a-target*='gift']):not([data-a-target='subscribed-button'])",
     ]);
     if (!subBtn) {
-      // No subscribe affordance (not logged in, or channel has no subs) → nothing to do.
-      return { subscribed: false, alreadyActive: true };
+      // Emphatically not "already subscribed". Not finding the control means the page did not
+      // look the way this code expects — a renamed attribute, a session that is not signed in,
+      // a channel with no subscriptions. Reporting that as an active sub is how a lapsed
+      // account was told for weeks that its renewal had nothing to do.
+      return {
+        subscribed: false,
+        reason: "no subscribe control found on the channel page",
+      };
     }
     await subBtn.click().catch(() => undefined);
 
