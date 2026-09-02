@@ -25,6 +25,9 @@ interface VersionState {
   available: Release[];
   unseen: Release[];
   canUpdate: boolean;
+  /** The release list could not be refreshed, so "no update" is not a claim worth making. */
+  checkFailed?: boolean;
+  checkError?: string;
 }
 
 export function VersionPanel() {
@@ -71,7 +74,10 @@ export function VersionPanel() {
 
   const showNotes = !dismissed && state.unseen.length > 0;
   const hasUpdate = state.available.length > 0;
-  if (!showNotes && !hasUpdate) return null;
+  // Silence means "nothing to report". A failed check has something to report: that it does not
+  // know. Saying nothing there is how an instance sat a release behind while looking current.
+  const showCheckFailed = state.checkFailed && !hasUpdate;
+  if (!showNotes && !hasUpdate && !showCheckFailed) return null;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -91,6 +97,18 @@ export function VersionPanel() {
               <div style={{ whiteSpace: "pre-wrap" }}>{r.notes || "No notes for this version."}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {showCheckFailed && (
+        <div className="uc-card">
+          <strong>Could not check for updates</strong>
+          <div style={{ color: "var(--uc-text-muted)", fontSize: 14, marginTop: 4 }}>
+            Running {state.running}. The release list could not be reached, so there may be a
+            newer version this does not know about
+            {state.checkError ? ` (${state.checkError})` : ""}. The updater still installs new
+            versions on its own schedule.
+          </div>
         </div>
       )}
 
