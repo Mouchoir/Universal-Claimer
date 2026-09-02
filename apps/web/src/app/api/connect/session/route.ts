@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sealSecret } from "@uc/core";
+import { createLogger, sealSecret } from "@uc/core";
 import { defaultFingerprint, parseCookiesTxt } from "@uc/connectors";
 import {
   createAccount,
@@ -13,6 +13,11 @@ import { redeemPairing } from "@/server/pairing";
 import { rateLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
+
+// This endpoint had no trace of any kind, which made "I clicked and nothing happened"
+// undiagnosable from the instance side: a request that never arrived and one that was rejected
+// looked identical, namely like silence. Every attempt now says what became of it.
+const log = createLogger({ name: "connect-session" });
 
 /**
  * Receive a session exported by the browser extension.
@@ -59,6 +64,10 @@ export async function POST(req: Request): Promise<NextResponse> {
   const token = typeof body?.token === "string" ? body.token : "";
   const cookiesText = typeof body?.cookiesText === "string" ? body.cookiesText : "";
   if (!token || !cookiesText) {
+    log.warn("rejected: malformed body", {
+      hasToken: Boolean(token),
+      hasCookies: Boolean(cookiesText),
+    });
     return fail("INVALID_INPUT", "token and cookiesText are required.", 400);
   }
 
@@ -66,6 +75,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   // that can be retried against.
   const pairing = redeemPairing(token);
   if (!pairing) {
+    log.warn("rejected: pairing expired or already used");
     return fail("PAIRING_INVALID", "This pairing has expired or was already used.", 401);
   }
   const { serviceId, config } = pairing;
@@ -77,8 +87,17 @@ export async function POST(req: Request): Promise<NextResponse> {
     return fail("AUTH_FAILED", "Could not parse the provided cookies.", 422);
   }
   if (cookies.length === 0) {
+    log.warn("rejected: no usable cookies in the payload", { serviceId });
     return fail("AUTH_FAILED", "No valid cookies were provided.", 422);
   }
+
+  // Which hosts the session actually covers. Names only — never values. This is what would have
+  // shown at a glance that a Prime Gaming export carried no amazon.fr cookies at all.
+  log.info("session received", {
+    serviceId,
+    cookies: cookies.length,
+    hosts: [...new Set(cookies.map((c) => c.domain.replace(/^\./, "")))].sort(),
+  });
 
   const { db } = getDb();
   const sealed = sealSecret(JSON.stringify({ cookies }), getMasterKey());
