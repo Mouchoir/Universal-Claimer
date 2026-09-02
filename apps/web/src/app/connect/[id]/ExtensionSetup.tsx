@@ -108,7 +108,19 @@ export function ExtensionSetup({ serviceId, config, onConnected }: Props) {
       // Polling runs whichever route the session takes. The bridge reports back directly, but the
       // popup route does not, and after a permission prompt the operator may well finish there —
       // so the page watches the outcome rather than only the path it started down.
+      // A pairing lasts ten minutes. Without this the page says "waiting" for ever, which is
+      // indistinguishable from an extension that tried and failed — and was, for several rounds.
+      const expiresAt = Date.now() + 10 * 60 * 1000;
       pollRef.current = setInterval(async () => {
+        if (Date.now() > expiresAt) {
+          stopPolling();
+          setArmed(false);
+          setError(
+            "The pairing expired before a session arrived. Press the button again, and if the " +
+              "extension shows an error, tell me what it says.",
+          );
+          return;
+        }
         const check = await fetch("/api/services").catch(() => null);
         if (!check?.ok) return;
         const { services } = await check.json();
