@@ -19,14 +19,18 @@ export async function GET(): Promise<NextResponse> {
 
   const running = process.env.APP_VERSION ?? "dev";
   const { db } = getDb();
-  const [releases, lastSeen] = await Promise.all([
+  const [feed, lastSeen] = await Promise.all([
     fetchReleases(),
     getSetting(db, LAST_SEEN_VERSION),
   ]);
 
-  const state = computeUpdateState(running, lastSeen, releases);
+  const state = computeUpdateState(running, lastSeen, feed.releases);
   return NextResponse.json({
     ...state,
     canUpdate: Boolean(process.env.UPDATE_WEBHOOK_URL),
+    // Reported so the dashboard can say "could not check" rather than implying "up to date",
+    // which are the same picture and opposite facts.
+    checkFailed: feed.stale,
+    ...(feed.error ? { checkError: feed.error } : {}),
   });
 }
