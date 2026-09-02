@@ -21,6 +21,20 @@ export interface MsRewardsPageDriver {
 export type MsRewardsDriverFactory = (session: SessionHandle) => MsRewardsPageDriver;
 
 const REWARDS_URL = "https://rewards.bing.com/";
+
+/**
+ * Did a navigation fail only because another one replaced it?
+ *
+ * Bing answers a search by redirecting to a canonical URL of its own (`&rdr=1&rdrig=…`). When the
+ * next search starts while that redirect is still in flight, Playwright rejects the first goto as
+ * interrupted — which is Bing behaving normally, not a failure. The search still happened and
+ * still counts. Anything else must keep throwing: swallowing every navigation error is how a
+ * genuinely broken run reports itself as a clean one.
+ */
+export function isInterruptedNavigation(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /interrupted by another navigation|Navigation to .* was interrupted/i.test(message);
+}
 const BING_SEARCH = "https://www.bing.com/search?q=";
 
 /**
@@ -97,7 +111,14 @@ export class PlaywrightMsRewardsDriver implements MsRewardsPageDriver {
 
   async search(query: string): Promise<{ ok: boolean; captcha?: boolean }> {
     const page = await this.page();
-    await page.goto(BING_SEARCH + encodeURIComponent(query), { waitUntil: "domcontentloaded" });
+    try {
+      await page.goto(BING_SEARCH + encodeURIComponent(query), { waitUntil: "domcontentloaded" });
+    } catch (err) {
+      if (!isInterruptedNavigation(err)) throw err;
+    }
+    // Let Bing's own redirect land before the next query starts, so each search does not
+    // interrupt the one before it in turn.
+    await page.waitForLoadState("domcontentloaded").catch(() => undefined);
     if (await this.detectCaptcha(page)) return { ok: false, captcha: true };
     return { ok: true };
   }

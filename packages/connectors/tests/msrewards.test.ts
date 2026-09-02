@@ -1,3 +1,4 @@
+import { isInterruptedNavigation } from "../src/msrewards/driver.js";
 import { describe, expect, it } from "vitest";
 import { NullCaptchaSolver, createLogger, type CaptchaSolver } from "@uc/core";
 import { MsRewardsConnector } from "../src/msrewards/index.js";
@@ -122,5 +123,36 @@ describe("MsRewardsConnector", () => {
     const res = await c.claim(session, fp, {}, makeCtx({ captcha: solver }).ctx);
     // First search hit a captcha (auto-solved), loop continued; at least one search completed.
     expect(res.outcome).toBe("claimed");
+  });
+});
+
+describe("isInterruptedNavigation", () => {
+  /**
+   * Bing answers a search by redirecting to a canonical URL of its own, so the next search can
+   * arrive while the previous redirect is in flight. That is Bing working, not a failure — but
+   * the claim reported it as one, and for weeks said only "claim error: Error" about it.
+   */
+  it("recognises the interruption Playwright reports for Bing's own redirect", () => {
+    expect(
+      isInterruptedNavigation(
+        new Error(
+          'page.goto: Navigation to "https://www.bing.com/search?q=what%20is%20a%20black%20hole" ' +
+            'is interrupted by another navigation to "https://www.bing.com/search?q=x&rdr=1"',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not swallow a real navigation failure", () => {
+    // Swallowing everything is how a broken run reports itself as a clean one.
+    expect(isInterruptedNavigation(new Error("page.goto: net::ERR_NAME_NOT_RESOLVED"))).toBe(false);
+    expect(isInterruptedNavigation(new Error("Timeout 30000ms exceeded"))).toBe(false);
+    expect(isInterruptedNavigation(new Error("Target page, context or browser has been closed")))
+      .toBe(false);
+  });
+
+  it("copes with a non-Error being thrown", () => {
+    expect(isInterruptedNavigation("interrupted by another navigation")).toBe(true);
+    expect(isInterruptedNavigation(undefined)).toBe(false);
   });
 });

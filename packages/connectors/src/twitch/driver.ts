@@ -219,9 +219,14 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
       // look the way this code expects — a renamed attribute, a session that is not signed in,
       // a channel with no subscriptions. Reporting that as an active sub is how a lapsed
       // account was told for weeks that its renewal had nothing to do.
+      // Name what the page did offer. Guessing a third selector blind has already cost two
+      // rounds; the attributes actually present are what settle it.
+      const seen = await this.subscribeishTargets(page);
       return {
         subscribed: false,
-        reason: "no subscribe control found on the channel page",
+        reason: seen.length
+          ? `no subscribe control matched; the page offered: ${seen.join(", ")}`
+          : "no subscribe control found, and the page exposed no subscribe-like controls at all",
       };
     }
     await subBtn.click().catch(() => undefined);
@@ -381,6 +386,26 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
       // reported a lapsed account as active, and skipped the renewal it was there to perform.
     ]);
     return subscribedMarker !== null;
+  }
+
+  /**
+   * Every `data-a-target` on the page that mentions subscribing, deduped and capped.
+   *
+   * Reported when the subscribe control cannot be found, because the alternative is guessing at
+   * Twitch's naming from the outside — which is exactly how a lapsed account was told for weeks
+   * that its renewal had nothing to do.
+   */
+  private async subscribeishTargets(page: Page): Promise<string[]> {
+    try {
+      const targets = await page.$$eval("[data-a-target]", (nodes) =>
+        nodes
+          .map((n) => n.getAttribute("data-a-target") ?? "")
+          .filter((t) => /sub|prime|tier/i.test(t)),
+      );
+      return [...new Set(targets)].sort().slice(0, 12);
+    } catch {
+      return [];
+    }
   }
 
   private async detectCaptcha(page: Page): Promise<boolean> {
