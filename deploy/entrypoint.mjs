@@ -15,7 +15,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 // Imported by path, not by package name: this file sits outside every workspace package, so
@@ -23,7 +23,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { bootstrapSecrets, supervise } from "../packages/core/dist/index.js";
 
 const DISPLAY = process.env.DISPLAY ?? ":99";
-const X_SOCKET = `/tmp/.X11-unix/X${DISPLAY.replace(":", "")}`;
+const DISPLAY_NUMBER = DISPLAY.replace(":", "");
+const X_SOCKET = `/tmp/.X11-unix/X${DISPLAY_NUMBER}`;
+const X_LOCK = `/tmp/.X${DISPLAY_NUMBER}-lock`;
 const CONFIG_DIR = process.env.UC_CONFIG_DIR ?? "/var/lib/uc";
 const SECRETS_FILE = join(CONFIG_DIR, "secrets.json");
 
@@ -80,12 +82,34 @@ if (secrets.generated.length > 0) {
   });
 }
 
+// Clear what a previous run left behind before starting a new display.
+//
+// `restart: unless-stopped` restarts the *same* container, so /tmp survives a crash: Xvfb then
+// refuses to start with "Server is already active for display 99", the supervisor takes the
+// container down as it should, and the restart meets the same stale files. That loop cannot
+// break on its own, and it took the instance offline for good.
+for (const stale of [X_LOCK, X_SOCKET]) {
+  try {
+    rmSync(stale, { force: true });
+  } catch {
+    // Not fatal on its own: Xvfb will say so plainly and the wait below will catch it.
+  }
+}
+
 // Xvfb: the worker runs Chromium headed (best stealth) so it needs a display even though the
 // host has none. Supervised like the others — if it dies, every later claim would fail at launch.
 const xvfb = start("xvfb", "Xvfb", [DISPLAY, "-screen", "0", "1280x800x24", "-nolisten", "tcp"]);
-for (let i = 0; i < 100 && !existsSync(X_SOCKET); i++) await sleep(100);
-if (!existsSync(X_SOCKET)) {
-  log("Xvfb did not create its socket", { socket: X_SOCKET });
+
+// Watch the process, not only the socket. A socket file left by a previous run made this report
+// "virtual display ready" for a display that had just failed to start — so the boot carried on
+// and the real cause appeared only later, as a child exiting for no stated reason.
+let xvfbDied = false;
+void xvfb.exited.then(() => {
+  xvfbDied = true;
+});
+for (let i = 0; i < 100 && !existsSync(X_SOCKET) && !xvfbDied; i++) await sleep(100);
+if (xvfbDied || !existsSync(X_SOCKET)) {
+  log("Xvfb failed to start", { socket: X_SOCKET, exited: xvfbDied });
   process.exit(1);
 }
 log("virtual display ready", { display: DISPLAY });
