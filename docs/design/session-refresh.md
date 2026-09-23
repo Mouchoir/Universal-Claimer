@@ -64,11 +64,17 @@ loaded, and so caught a live session half-way through its own renewal and report
   run's cookies, which now hold the tokens the login page just issued, are persisted as above.
   If it does not, the session is `signed_out`.
 - **A Cloudflare challenge** keeps the account URL, so it used to read as signed in. It is now
-  recognised by Cloudflare's `cf-mitigated: challenge` header on the document, or by the
-  challenge page's own markup (element ids, the `_cf_chl_opt` script global, `__cf_chl_` URL
-  tokens), never by its text, which is localized. It gets up to about 20 s to clear by itself;
-  one that stays is `blocked`, which fails the run with "Blocked by a Cloudflare challenge at ..."
-  instead of asking for a reconnect that could not help.
+  recognised by Cloudflare's `cf-mitigated: challenge` header on the latest page document, or by
+  the challenge page's own markup (element ids, the `_cf_chl_opt` script global), never by its
+  text, which is localized. Not by the `__cf_chl_` URL tokens either: a solved challenge reloads
+  into the real page with them still in the query, so they outlive it. It gets up to about 20 s
+  to clear by itself; one that stays is `blocked`, which fails the run with "Blocked by a
+  Cloudflare challenge at ..." instead of asking for a reconnect that could not help. The account
+  page a bounce comes back to gets the same wait, and is `blocked` (with `bounced: true`) if its
+  challenge stays.
+- **A password login** ends on the same check and hands it back whole, so a challenge there is
+  reported as `blocked` too rather than as "login failed", and a claim does not run the check a
+  second time.
 - Nothing waits for network idle: Epic's pages keep connections open, and it may never come.
 
 A `signed_out` summary names where the check stopped (the path after the wait, never the query

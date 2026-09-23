@@ -20,9 +20,19 @@ export interface EpicSignInCheck {
   path: string;
   /** HTTP status of the last page document seen, when there was one. */
   status?: number;
-  /** The first landing was the login page, and Epic's login page sent us back signed in. */
+  /**
+   * The first landing was the login page, and Epic's login page sent the browser back to the
+   * account page. Kept on a `blocked` verdict too, when the page it came back to was challenged.
+   */
   bounced: boolean;
 }
+
+/**
+ * How a password login ended. Not a boolean: the sign-in check it ends on has three outcomes, and
+ * folding a Cloudflare challenge into "login failed" sends the operator off to fix credentials
+ * that were never the problem.
+ */
+export type EpicLoginResult = { captcha: true } | { captcha?: false; check: EpicSignInCheck };
 
 /** How long the signed-in check gives Epic (and Cloudflare) to settle. */
 export interface SignInTiming {
@@ -106,7 +116,9 @@ async function waitUntil(
  *
  * A Cloudflare challenge keeps the account URL, so it used to read as signed in. It now gets its
  * own bounded wait (a managed challenge usually clears itself and reloads), and one that does not
- * clear is reported as `blocked` rather than as either session state.
+ * clear is reported as `blocked` rather than as either session state. The account page a bounce
+ * lands on is a fresh document that can be challenged just like the first, so it gets the same
+ * wait.
  */
 export async function settleSignIn(
   probe: SignInProbe,
@@ -122,8 +134,10 @@ export async function settleSignIn(
     };
   };
 
-  const cleared = await waitUntil(probe, timing.challengeMs, timing.pollMs, async () => !(await probe.challenged()));
-  if (!cleared) return verdict("blocked");
+  const challengeClears = () =>
+    waitUntil(probe, timing.challengeMs, timing.pollMs, async () => !(await probe.challenged()));
+
+  if (!(await challengeClears())) return verdict("blocked");
 
   // Today's pass condition, unchanged: anywhere but the login page is signed in.
   if (!isLoginUrl(probe.url())) return verdict("signed_in");
@@ -132,7 +146,9 @@ export async function settleSignIn(
     const url = probe.url();
     return isAccountUrl(url) && !isLoginUrl(url);
   });
-  if (back) return verdict("signed_in", true);
+  // Called signed in on the URL alone, a challenge on the page the bounce came back to would send
+  // the run on to fail somewhere further along, which is the mistake the first wait is there for.
+  if (back) return verdict((await challengeClears()) ? "signed_in" : "blocked", true);
   // The login page can itself be put behind a challenge; that is still not a verdict on the
   // session.
   if (await probe.challenged()) return verdict("blocked");
@@ -183,11 +199,11 @@ export interface EpicPageDriver {
    * after giving Epic's login page its chance to renew the session (see {@link settleSignIn}).
    */
   checkSignIn(): Promise<EpicSignInCheck>;
-  loginWithPassword(
-    email: string,
-    password: string,
-    totp?: string,
-  ): Promise<{ authenticated: boolean; captcha?: boolean }>;
+  /**
+   * Log in with a password. Ends on the same check as {@link checkSignIn} and hands it back
+   * whole, so the caller neither loses the `blocked` verdict nor opens the account page twice.
+   */
+  loginWithPassword(email: string, password: string, totp?: string): Promise<EpicLoginResult>;
   /** Free games claimable right now (title + product URL). */
   listClaimableGames(): Promise<FreeGame[]>;
   /**
@@ -357,9 +373,13 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
 
   /**
    * Is the page a Cloudflare challenge? Cloudflare's own `cf-mitigated: challenge` header on the
-   * document is the documented signal; the challenge page's markup and its `__cf_chl_` URL
-   * tokens back it up for a challenge that arrives without it. None of it is page text, so it
-   * reads the same in every language.
+   * latest document is the documented signal; the challenge page's markup backs it up for a
+   * challenge that arrives without it. None of it is page text, so it reads the same in every
+   * language.
+   *
+   * Not the `__cf_chl_` URL tokens: a solved challenge reloads into the real page with them still
+   * in the query (`/account/personal?__cf_chl_f_tk=...` is the account page itself), so they
+   * outlive the challenge and would hold a cleared one as blocked until the wait ran out.
    */
   private async isChallenge(page: Page, doc: Response | null): Promise<boolean> {
     try {
@@ -367,7 +387,6 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     } catch {
       // No readable headers; fall through to the page itself.
     }
-    if (/[?&]__cf_chl_/.test(page.url())) return true;
     if ((await page.locator(CF_CHALLENGE_MARKERS).count().catch(() => 0)) > 0) return true;
     return page
       .evaluate("typeof window._cf_chl_opt !== 'undefined'")
@@ -375,22 +394,18 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
       .catch(() => false);
   }
 
-  async loginWithPassword(
-    email: string,
-    password: string,
-    totp?: string,
-  ): Promise<{ authenticated: boolean; captcha?: boolean }> {
+  async loginWithPassword(email: string, password: string, totp?: string): Promise<EpicLoginResult> {
     const page = await this.page();
     await page.goto("https://www.epicgames.com/id/login/epic", { waitUntil: "domcontentloaded" });
     await page.fill("#email", email).catch(() => undefined);
     await page.fill("#password", password).catch(() => undefined);
     await page.click("#sign-in").catch(() => undefined);
-    if (await this.detectCaptcha(page)) return { authenticated: false, captcha: true };
+    if (await this.detectCaptcha(page)) return { captcha: true };
     if (totp) {
       await page.fill("input[name='code']", totp).catch(() => undefined);
       await page.click("#continue").catch(() => undefined);
     }
-    return { authenticated: (await this.checkSignIn()).state === "signed_in" };
+    return { check: await this.checkSignIn() };
   }
 
   async listClaimableGames(): Promise<FreeGame[]> {

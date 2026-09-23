@@ -21,7 +21,7 @@ function fakeDriver(over: Partial<EpicPageDriver>): EpicPageDriver {
   return {
     applyCookies: async () => {},
     checkSignIn: async () => SIGNED_IN,
-    loginWithPassword: async () => ({ authenticated: true }),
+    loginWithPassword: async () => ({ check: SIGNED_IN }),
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
     getUsername: async () => "ExampleUser",

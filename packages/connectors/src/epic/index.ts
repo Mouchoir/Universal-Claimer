@@ -86,6 +86,20 @@ async function signedOutDetail(driver: EpicPageDriver, check: EpicSignInCheck): 
 }
 
 /**
+ * Why a check that did not end signed in failed. `lead` says what was being attempted; a
+ * challenge gets the blocked summary whatever it was, since neither the cookies nor the
+ * credentials are what needs fixing then.
+ */
+async function notSignedInReason(
+  driver: EpicPageDriver,
+  check: EpicSignInCheck,
+  lead: string,
+): Promise<string> {
+  if (check.state === "blocked") return blockedSummary(check);
+  return `${lead}: ${await signedOutDetail(driver, check)}`;
+}
+
+/**
  * Epic Games connector (reference implementation). Orchestration logic here is unit-tested
  * via an injected fake driver; the Playwright DOM specifics live in {@link PlaywrightEpicDriver}.
  */
@@ -113,10 +127,11 @@ export class EpicConnector implements Connector, InteractiveLogin {
         return {
           ok: false,
           fingerprint,
-          reason:
-            check.state === "blocked"
-              ? blockedSummary(check)
-              : `session is not authenticated (expired or invalid cookies): ${await signedOutDetail(driver, check)}`,
+          reason: await notSignedInReason(
+            driver,
+            check,
+            "session is not authenticated (expired or invalid cookies)",
+          ),
         };
       }
       const totp = input.totpSeed ? ctx.totp(input.totpSeed) : undefined;
@@ -128,10 +143,11 @@ export class EpicConnector implements Connector, InteractiveLogin {
           reason: "a captcha was required during login; solve it and use session import instead",
         };
       }
+      if (res.check.state === "signed_in") return { ok: true, fingerprint };
       return {
-        ok: res.authenticated,
+        ok: false,
         fingerprint,
-        reason: res.authenticated ? undefined : "login failed (check credentials / TOTP)",
+        reason: await notSignedInReason(driver, res.check, "login failed (check credentials / TOTP)"),
       };
     } finally {
       await ctx.browser.close(session);
@@ -148,15 +164,28 @@ export class EpicConnector implements Connector, InteractiveLogin {
     const driver = this.createDriver(session);
     let authenticated = false;
     try {
-      // Re-establish authentication within this session from the stored secret.
+      // Re-establish authentication within this session from the stored secret. A password login
+      // already ends on the sign-in check; running it again would reopen the account page for
+      // nothing, with another bounce and challenge wait on top.
+      let check: EpicSignInCheck;
       if (input.method === "session_import") {
         await driver.applyCookies(input.cookies);
+        check = await driver.checkSignIn();
       } else {
         const totp = input.totpSeed ? ctx.totp(input.totpSeed) : undefined;
-        await driver.loginWithPassword(input.email, input.password, totp);
+        const res = await driver.loginWithPassword(input.email, input.password, totp);
+        if (res.captcha) {
+          // The same way out authenticate() gives: the password route is stuck behind the
+          // captcha, and a session import does not go through the login form at all.
+          return {
+            outcome: "reauth_needed",
+            summary:
+              "Epic asked for a captcha during login; solve it and reconnect the account with a session import.",
+          };
+        }
+        check = res.check;
       }
 
-      const check = await driver.checkSignIn();
       // Neutral keys only: the logger hides anything that looks like a session or a cookie.
       ctx.log.info("epic sign-in check", {
         state: check.state,
@@ -278,4 +307,10 @@ export class EpicConnector implements Connector, InteractiveLogin {
 }
 
 export { PlaywrightEpicDriver } from "./driver.js";
-export type { EpicPageDriver, EpicDriverFactory, EpicSignInCheck, EpicSignInState } from "./driver.js";
+export type {
+  EpicPageDriver,
+  EpicDriverFactory,
+  EpicLoginResult,
+  EpicSignInCheck,
+  EpicSignInState,
+} from "./driver.js";

@@ -31,7 +31,7 @@ function fakeDriver(overrides: Partial<EpicPageDriver>): EpicPageDriver {
   return {
     applyCookies: async () => {},
     checkSignIn: async () => SIGNED_IN,
-    loginWithPassword: async () => ({ authenticated: true }),
+    loginWithPassword: async () => ({ check: SIGNED_IN }),
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
     getUsername: async () => "ExampleUser",
@@ -68,7 +68,7 @@ describe("EpicConnector.authenticate", () => {
 
   it("credential login uses the TOTP from context and reports success", async () => {
     const totp = vi.fn(() => "654321");
-    const loginWithPassword = vi.fn(async () => ({ authenticated: true }));
+    const loginWithPassword = vi.fn(async () => ({ check: SIGNED_IN }));
     const connector = new EpicConnector({ createDriver: () => fakeDriver({ loginWithPassword }) });
     const res = await connector.authenticate(
       { method: "credential_totp", email: "a@b.com", password: "pw", totpSeed: "SEED" },
@@ -81,7 +81,7 @@ describe("EpicConnector.authenticate", () => {
 
   it("a captcha during login → not ok, guiding the user to session import", async () => {
     const connector = new EpicConnector({
-      createDriver: () => fakeDriver({ loginWithPassword: async () => ({ authenticated: false, captcha: true }) }),
+      createDriver: () => fakeDriver({ loginWithPassword: async () => ({ captcha: true }) }),
     });
     const res = await connector.authenticate(
       { method: "credential_totp", email: "a@b.com", password: "pw" },

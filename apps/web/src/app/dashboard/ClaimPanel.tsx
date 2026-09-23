@@ -129,9 +129,10 @@ export function ClaimPanel() {
               {a.status === "needs_reauth" && (
                 <p className="uc-warning" style={{ fontSize: 13, marginTop: 8 }}>
                   This session expired, so claims can&apos;t run. Services keep browser sessions
-                  alive only for a while (Epic&apos;s login tokens last about two days), so it needs
-                  reconnecting. Use <strong>Reconnect</strong> — the fastest way is the session
-                  exporter extension.
+                  alive only for a while (Epic&apos;s short-lived tokens last hours, about 8 h, and
+                  the session outlives them only as long as its longer-lived cookies do), so it
+                  needs reconnecting. Use <strong>Reconnect</strong> — the fastest way is the
+                  session exporter extension.
                 </p>
               )}
 
