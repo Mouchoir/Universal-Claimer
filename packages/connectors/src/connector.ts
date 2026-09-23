@@ -141,12 +141,13 @@ export interface ConnectorContext {
    * Hand back the session cookies as they stand at the end of an authenticated run, so the stored
    * secret can be refreshed.
    *
-   * Services hand out short-lived auth tokens (Epic's expire in ~2 days) and renew them silently
-   * on each visit. A stored snapshot never gets renewed, so it dies while the operator's own
-   * browser stays signed in — which is exactly the "why do I have to reconnect?" problem. Since a
-   * claim already drives a real browser through the site, the refreshed cookies are right there;
-   * persisting them keeps the session alive indefinitely as long as runs happen more often than
-   * the token lifetime.
+   * Services hand out short-lived auth tokens and renew them silently on each visit. Epic's last
+   * hours, about 8 h; the session lives on past them through longer-lived cookies, from which the
+   * login page issues new tokens. A stored snapshot never gets renewed, so once those cookies
+   * lapse too it dies while the operator's own browser stays signed in — which is exactly the
+   * "why do I have to reconnect?" problem. Since a claim already drives a real browser through
+   * the site, the refreshed cookies are right there; persisting them keeps the session alive
+   * indefinitely as long as runs happen more often than the longer-lived cookies last.
    *
    * Cookies are secret: they are passed here (never returned in a ClaimResult, which is logged
    * and summarized) and the runtime seals them before storage. Optional — absent in tests.

@@ -14,10 +14,80 @@ import type {
   InteractiveLogin,
   SessionHandle,
 } from "../connector.js";
-import { PlaywrightTwitchDriver, type TwitchDriverFactory } from "./driver.js";
+import type { Logger } from "@uc/core";
+import {
+  PlaywrightTwitchDriver,
+  futureDate,
+  type ResubResult,
+  type SubEvidence,
+  type SubKind,
+  type TwitchDriverFactory,
+} from "./driver.js";
 
 const TWITCH_RECAPTCHA_URL = "https://www.twitch.tv";
 const TWITCH_RECAPTCHA_KEY = "twitch-key-placeholder";
+
+const KIND_LABEL: Record<SubKind, string> = {
+  prime: "Prime sub",
+  gift: "Gifted sub",
+  paid: "Paid sub",
+  unknown: "A sub",
+};
+
+/** The calendar day of an ISO date, in UTC: the same string whatever the operator's locale. */
+function day(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/**
+ * The summary of an "already active" verdict, worded from how it was reached.
+ *
+ * It used to say "Prime sub to X is already active" whatever the sub was and whoever said so.
+ * The two are not equally trustworthy: Twitch's API states the sub and its end date, while the
+ * page only shows a button, and the page is also what gets read when the API could not be asked.
+ * A run that skipped the renewal has to say which of those it rested on, or the day it is wrong
+ * nobody can tell from the history.
+ */
+export function activeSubSummary(channel: string, evidence: SubEvidence | undefined): string {
+  if (!evidence) return `A sub to "${channel}" is already active.`;
+  const fromApi = evidence.decidedBy === "api";
+  // The API reports Prime explicitly, so from there an unknown kind is at least not Prime.
+  const what =
+    fromApi && evidence.kind === "unknown" ? "A non-Prime sub" : KIND_LABEL[evidence.kind];
+  const when = evidence.endsAt
+    ? ` until ${day(evidence.endsAt)}`
+    : evidence.renewsAt
+      ? `, renewing on ${day(evidence.renewsAt)}`
+      : fromApi
+        ? " with no end date"
+        : "";
+  const why = evidence.apiUnavailable ?? "no reason was given";
+  const source = fromApi
+    ? "from Twitch's API"
+    : `from the channel page; Twitch's API could not be asked: ${why}`;
+  return `${what} to "${channel}" is active${when} (${source}).`;
+}
+
+/**
+ * The run's one line on how the resub decision was reached. Key names are deliberately neutral:
+ * the logger redacts anything that looks like a secret by key, and none of these is one.
+ */
+function logVerdict(log: Logger, res: ResubResult): void {
+  const ev = res.evidence;
+  log.info("twitch sub verdict", {
+    decidedBy: ev?.decidedBy ?? "none",
+    apiHttpStatus: ev?.apiHttpStatus,
+    apiErrors: ev?.apiFirstError,
+    apiUnavailable: ev?.apiUnavailable,
+    listCount: ev?.listCount,
+    edgeCount: ev?.edgeCount,
+    listHasChannel: ev?.listHasChannel,
+    kind: ev?.kind,
+    endsAt: ev?.endsAt,
+    renewsAt: ev?.renewsAt,
+    subscribeishTargets: ev?.subscribeishTargets,
+  });
+}
 
 /**
  * Twitch Prime resub connector (reference implementation of a targeted, config-driven
@@ -25,7 +95,7 @@ const TWITCH_RECAPTCHA_KEY = "twitch-key-placeholder";
  */
 export class TwitchConnector implements Connector, InteractiveLogin {
   readonly id = "twitch";
-  readonly version = "0.1.0";
+  readonly version = "0.2.0";
   readonly methods: ConnectionMethod[] = ["session_import", "credential_totp"];
   readonly loginUrl = "https://www.twitch.tv/login";
   // A Prime sub lasts until a known date; renewing it on a daily/weekly slot makes no sense.
@@ -105,13 +175,15 @@ export class TwitchConnector implements Connector, InteractiveLogin {
           websiteKey: TWITCH_RECAPTCHA_KEY,
         });
         if (token) res = await driver.resubWithPrime(channel);
-        if (res.captcha) {
-          ctx.emit({
-            type: "requires_human_action",
-            prompt: `A captcha must be solved to resubscribe to "${channel}". Solve it, then resume.`,
-          });
-          return { outcome: "requires_human_action", summary: `Captcha needed for "${channel}".` };
-        }
+      }
+      // Logged once, on the attempt that counts, before any of the returns below.
+      logVerdict(ctx.log, res);
+      if (res.captcha) {
+        ctx.emit({
+          type: "requires_human_action",
+          prompt: `A captcha must be solved to resubscribe to "${channel}". Solve it, then resume.`,
+        });
+        return { outcome: "requires_human_action", summary: `Captcha needed for "${channel}".` };
       }
       // The username comes from a cookie, so it's readable even when the channel was wrong —
       // report it so the dashboard still shows which account is connected.
@@ -124,25 +196,28 @@ export class TwitchConnector implements Connector, InteractiveLogin {
       }
 
       // The session is open, so report the account's name and the current Prime sub for free —
-      // the dashboard shows them, and the sub's end date seeds the next automatic run.
+      // the dashboard shows them, and the sub's end date seeds the next automatic run. When the
+      // API is what said the sub is active, its dates are the answer and there is nothing to ask
+      // again; one that renews rather than ends is next due on its renewal date. After a resub
+      // the verdict predates it, so the new end date has to be read afresh. Either way only a
+      // date still ahead is kept: this is when the next run falls due, and a live sub can carry
+      // a renewal date that has already passed.
+      const ev = res.evidence;
+      const holdsSub = Boolean(res.alreadyActive || res.subscribed);
+      const endsAt = !holdsSub
+        ? undefined
+        : res.alreadyActive && ev?.decidedBy === "api"
+          ? futureDate(ev.endsAt ?? ev.renewsAt)
+          : await driver.getPrimeSubEnd(channel);
       const accountFacts = {
         username: await driver.getUsername(),
-        entitlements:
-          res.alreadyActive || res.subscribed
-            ? [
-                {
-                  kind: "prime_sub" as const,
-                  channel,
-                  endsAt: await driver.getPrimeSubEnd(channel),
-                },
-              ]
-            : [],
+        entitlements: holdsSub ? [{ kind: "prime_sub" as const, channel, endsAt }] : [],
       };
 
       if (res.alreadyActive) {
         return {
           outcome: "nothing_to_claim",
-          summary: `Prime sub to "${channel}" is already active.`,
+          summary: activeSubSummary(channel, ev),
           accountFacts,
         };
       }

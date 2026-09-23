@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { estimateBenefitEnd, isValidProxyUrl, sealSecret } from "@uc/core";
+import { createLogger, estimateBenefitEnd, isValidProxyUrl, sealSecret } from "@uc/core";
 import {
+  checkSession,
   defaultFingerprint,
   defaultRegistry,
   parseCookiesJson,
@@ -22,6 +23,10 @@ import { getDb, getMasterKey } from "@/server/context";
 import { jsonError } from "@/server/http";
 import { connectAccountSchema, missingConfigKeys } from "@/server/schemas";
 import { isAuthenticated } from "@/server/session-cookie";
+
+// The manual paste logged nothing, so what a pasted session contained could never be told
+// afterwards — not even which hosts it covered.
+const log = createLogger({ name: "accounts" });
 
 export const dynamic = "force-dynamic";
 
@@ -112,6 +117,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Build the secret payload from the chosen method.
   let payload: string;
+  let warnings: string[] = [];
   if (input.method === "session_import") {
     let cookies;
     try {
@@ -126,6 +132,16 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (cookies.length === 0) {
       return jsonError("AUTH_FAILED", "No valid cookies were provided.", 422);
     }
+    const check = checkSession(service.id, cookies);
+    warnings = check.warnings;
+    log.info("session received", {
+      serviceId: service.id,
+      count: cookies.length,
+      hosts: [...new Set(cookies.map((c) => c.domain.replace(/^\./, "")))].sort(),
+      signInNames: check.signInNames,
+      ...(check.signedInOn ? { signedInOn: check.signedInOn } : {}),
+      warnings: warnings.length,
+    });
     payload = JSON.stringify({ cookies });
   } else {
     payload = JSON.stringify({
@@ -160,9 +176,17 @@ export async function POST(req: Request): Promise<NextResponse> {
     // The usual reason a connector auto-disabled is the session that just got replaced, so
     // clear the flag rather than leaving the operator with a dead, unrunnable service.
     await reenableConnector(db, service.id);
-    return NextResponse.json({ accountId: existing.id, status: "connected", reconnected: true });
+    return NextResponse.json({
+      accountId: existing.id,
+      status: "connected",
+      reconnected: true,
+      ...(warnings.length ? { warnings } : {}),
+    });
   }
 
   const account = await createAccount(db, { serviceId: service.id, ...values });
-  return NextResponse.json({ accountId: account.id, status: account.status }, { status: 201 });
+  return NextResponse.json(
+    { accountId: account.id, status: account.status, ...(warnings.length ? { warnings } : {}) },
+    { status: 201 },
+  );
 }

@@ -55,6 +55,14 @@ export interface PairingStatus {
   /** Set when connected: how many cookies arrived, and for which hosts. Never their values. */
   cookieCount?: number;
   hosts?: string[];
+  /** Set when connected: where a marketplace account is signed in, e.g. `amazon.fr`. */
+  signedInOn?: string[];
+  /**
+   * Set when connected: what looks wrong with the session that arrived — no sign-in in it, or an
+   * expired one. Stored anyway, since cookie names are the services' to change; said out loud so
+   * the operator can fix it now rather than at the next run.
+   */
+  warnings?: string[];
   /** Set when failed: what went wrong, in words the operator can act on. */
   error?: { code: string; message: string };
 }

@@ -26,6 +26,8 @@ export default function ConnectPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isReconnect, setIsReconnect] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Set when a pasted session was saved but looks like it will not work. */
+  const [savedWarnings, setSavedWarnings] = useState<string[] | null>(null);
 
   /** Validate required connector config fields client-side; highlight + focus the first empty one. */
   function validateConfig(): boolean {
@@ -94,6 +96,7 @@ export default function ConnectPage() {
   async function connect(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setSavedWarnings(null);
     if (!validateConfig()) return;
     setBusy(true);
     try {
@@ -106,11 +109,18 @@ export default function ConnectPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => null);
       if (res.ok) {
+        // A warning is shown rather than skipped past: it is the difference between fixing the
+        // session now and finding out from a failed run later.
+        if (Array.isArray(data?.warnings) && data.warnings.length > 0) {
+          setSavedWarnings(data.warnings as string[]);
+          return;
+        }
+        router.refresh();
         router.push("/dashboard");
         return;
       }
-      const data = await res.json().catch(() => null);
       setError(data?.error?.message ?? "Could not connect the account.");
     } finally {
       setBusy(false);
@@ -276,8 +286,30 @@ export default function ConnectPage() {
           )}
 
           {error && <p style={{ color: "var(--uc-danger)" }}>{error}</p>}
+          {savedWarnings && (
+            <div className="uc-warning" role="alert" style={{ fontSize: 14 }}>
+              <strong>Saved, but this session may not work.</strong>
+              {savedWarnings.map((w) => (
+                <div key={w} style={{ marginTop: 4 }}>
+                  {w}
+                </div>
+              ))}
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="uc-quiet"
+                  onClick={() => {
+                    router.refresh();
+                    router.push("/dashboard");
+                  }}
+                >
+                  Go to the dashboard anyway
+                </button>
+              </div>
+            </div>
+          )}
           <button type="submit" disabled={busy}>
-            {busy ? "Connecting…" : "Connect account"}
+            {busy ? "Connecting…" : savedWarnings ? "Connect again" : "Connect account"}
           </button>
         </form>
         </>
