@@ -217,3 +217,30 @@ describe("redemption", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("the session check", () => {
+  it("reports a Prime Gaming session with no Amazon sign-in as a warning, and still stores it", async () => {
+    const { token, pairingId } = await mintFor("primegaming");
+    const noSignIn = [
+      "# Netscape HTTP Cookie File",
+      ".amazon.fr\tTRUE\t/\tTRUE\t1900000000\tsession-id\tvalue-1",
+      ".amazon.fr\tTRUE\t/\tTRUE\t1900000000\tubid-acbfr\tvalue-2",
+    ].join("\n");
+    const res = await redeem(post("http://instance/api/connect/session", { token, cookiesText: noSignIn }));
+    expect(res.status).toBe(201);
+
+    const { body } = await statusOf(pairingId);
+    expect(body.state).toBe("connected");
+    expect(body.signedInOn).toEqual([]);
+    expect((body.warnings as string[])[0]).toMatch(/No Amazon sign-in/);
+  });
+
+  it("names the marketplace a good Prime Gaming session is signed in on", async () => {
+    const { token, pairingId } = await mintFor("primegaming");
+    const signedIn = ".amazon.fr\tTRUE\t/\tTRUE\t1900000000\tat-acbfr\tvalue-1";
+    await redeem(post("http://instance/api/connect/session", { token, cookiesText: signedIn }));
+    const { body } = await statusOf(pairingId);
+    expect(body.signedInOn).toEqual(["amazon.fr"]);
+    expect(body).not.toHaveProperty("warnings");
+  });
+});

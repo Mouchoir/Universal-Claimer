@@ -61,6 +61,8 @@ interface PairingStatus {
   reconnected?: boolean;
   cookieCount?: number;
   hosts?: string[];
+  signedInOn?: string[];
+  warnings?: string[];
   error?: { code: string; message: string };
 }
 
@@ -204,8 +206,9 @@ export function ExtensionSetup({ serviceId, config, onConnected, pollMs = POLL_M
             setError(null);
             setNeedsAccess(null);
             setConnected(body);
-            // Long enough to read what arrived; the dashboard is where it is confirmed.
-            setTimeout(() => onConnectedRef.current(), pollMs);
+            // A warning stays on screen until read: leaving on a timer is how "it said connected"
+            // turned into a failed run hours later. Otherwise, long enough to read what arrived.
+            if (!body.warnings?.length) setTimeout(() => onConnectedRef.current(), pollMs);
             return;
           default:
             return next();
@@ -346,12 +349,37 @@ export function ExtensionSetup({ serviceId, config, onConnected, pollMs = POLL_M
       </div>
 
       {connected ? (
-        <p role="status" style={{ margin: 0, fontSize: 14 }}>
-          <strong>{connected.reconnected ? "Reconnected." : "Connected."}</strong>{" "}
-          {connected.cookieCount ?? 0} cookies received
-          {connected.hosts && connected.hosts.length > 0 && <> ({connected.hosts.join(", ")})</>}.
-          Taking you to the dashboard…
-        </p>
+        <div style={{ display: "grid", gap: 8 }}>
+          <p role="status" style={{ margin: 0, fontSize: 14 }}>
+            <strong>{connected.reconnected ? "Reconnected." : "Connected."}</strong>{" "}
+            {connected.cookieCount ?? 0} cookies received
+            {connected.hosts && connected.hosts.length > 0 && <> ({connected.hosts.join(", ")})</>}.
+            {connected.signedInOn && connected.signedInOn.length > 0 && (
+              <> Signed in on {connected.signedInOn.join(", ")}.</>
+            )}
+            {!connected.warnings?.length && " Taking you to the dashboard…"}
+          </p>
+          {connected.warnings && connected.warnings.length > 0 && (
+            <>
+              <div className="uc-warning" role="alert" style={{ fontSize: 14 }}>
+                <strong>This session may not work.</strong>
+                {connected.warnings.map((w) => (
+                  <div key={w} style={{ marginTop: 4 }}>
+                    {w}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={arm}>
+                  Send it again
+                </button>
+                <button type="button" className="uc-quiet" onClick={() => onConnectedRef.current()}>
+                  Go to the dashboard
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       ) : !armed || bridge ? (
         <>
           <button type="button" onClick={arm} disabled={busy}>

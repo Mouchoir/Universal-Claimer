@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createLogger, sealSecret } from "@uc/core";
-import { defaultFingerprint, parseCookiesTxt } from "@uc/connectors";
+import { checkSession, defaultFingerprint, parseCookiesTxt } from "@uc/connectors";
 import {
   createAccount,
   getAccountByService,
@@ -102,9 +102,19 @@ export async function POST(req: Request): Promise<NextResponse> {
   // Which hosts the session actually covers. Names only — never values. This is what would have
   // shown at a glance that a Prime Gaming export carried no amazon.fr cookies at all.
   const hosts = [...new Set(cookies.map((c) => c.domain.replace(/^\./, "")))].sort();
+  // Whether it carries a sign-in at all, by cookie name. Both of the reconnects that looked fine
+  // and failed at the next run would have shown here.
+  const check = checkSession(serviceId, cookies);
   // `count`, not `cookies`: the logger redacts any key that mentions cookies, which is right for
   // values and had been hiding this number since the line was added.
-  log.info("session received", { serviceId, count: cookies.length, hosts });
+  log.info("session received", {
+    serviceId,
+    count: cookies.length,
+    hosts,
+    signInNames: check.signInNames,
+    ...(check.signedInOn ? { signedInOn: check.signedInOn } : {}),
+    warnings: check.warnings.length,
+  });
 
   try {
     const { db } = getDb();
@@ -135,7 +145,14 @@ export async function POST(req: Request): Promise<NextResponse> {
     }
 
     const reconnected = Boolean(existing);
-    settlePairing(token, { state: "connected", reconnected, cookieCount: cookies.length, hosts });
+    settlePairing(token, {
+      state: "connected",
+      reconnected,
+      cookieCount: cookies.length,
+      hosts,
+      ...(check.signedInOn ? { signedInOn: check.signedInOn } : {}),
+      ...(check.warnings.length ? { warnings: check.warnings } : {}),
+    });
     log.info("session stored", { serviceId, reconnected });
     const res = NextResponse.json(
       { ok: true, serviceId, reconnected },

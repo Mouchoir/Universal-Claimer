@@ -217,3 +217,34 @@ describe("with the page bridge", () => {
     expect(relayed).toEqual([{ token: TOKEN, serviceId: "primegaming" }]);
   });
 });
+
+describe("a session that arrived with a warning", () => {
+  it("stays on the page and says why, instead of leaving for the dashboard", async () => {
+    fakeInstance({
+      statuses: [
+        {
+          status: 200,
+          body: {
+            state: "connected",
+            serviceId: "primegaming",
+            reconnected: true,
+            cookieCount: 28,
+            hosts: ["amazon.fr"],
+            signedInOn: [],
+            warnings: ["No Amazon sign-in was found in this session."],
+          },
+        },
+      ],
+    });
+    const { onConnected } = setup();
+
+    await userEvent.click(screen.getByRole("button", { name: "Set up with the extension" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/No Amazon sign-in/);
+    await act(() => new Promise((r) => setTimeout(r, POLL * 5)));
+    expect(onConnected).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Go to the dashboard" }));
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+});
