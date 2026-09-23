@@ -5,8 +5,10 @@ import {
   createAccount,
   createDb,
   getAccountByService,
+  getAccountSecret,
   hasConsent,
   recordConsent,
+  replaceAccountSecret,
   type DbHandle,
 } from "@uc/db";
 
@@ -72,5 +74,58 @@ maybe("connect + consent (integration)", () => {
     ).rejects.toThrow();
 
     expect((await getAccountByService(db, "epic"))?.id).toBe(account.id);
+  });
+});
+
+maybe("reconnect (integration)", () => {
+  let handle: DbHandle;
+
+  beforeAll(async () => {
+    handle = createDb(url!);
+    await handle.pool.query("DELETE FROM connected_account");
+  });
+
+  afterAll(async () => {
+    if (handle) await handle.close();
+  });
+
+  it("keeps the proxy and fingerprint when a reconnect does not supply them", async () => {
+    // The extension's reconnect has no proxy field. replaceAccountSecret used to write null for an
+    // omitted proxy, so reconnecting silently dropped the one the operator had configured.
+    const { db } = handle;
+    const secret = sealSecret(JSON.stringify({ cookies: [] }), MASTER_KEY);
+    const proxy = sealSecret("socks5://proxy.example:1080", MASTER_KEY);
+    const fingerprint = { ...(defaultFingerprint() as object), marker: "original" };
+    const account = await createAccount(db, {
+      serviceId: "twitch",
+      method: "session_import",
+      secretCiphertext: secret.ciphertext,
+      secretDataKey: secret.wrappedDataKey,
+      fingerprint,
+      proxyCiphertext: proxy.ciphertext,
+      proxyDataKey: proxy.wrappedDataKey,
+    });
+
+    const fresh = sealSecret(JSON.stringify({ cookies: [{ name: "auth-token" }] }), MASTER_KEY);
+    await replaceAccountSecret(db, account.id, {
+      method: "session_import",
+      secretCiphertext: fresh.ciphertext,
+      secretDataKey: fresh.wrappedDataKey,
+    });
+
+    const stored = await getAccountSecret(db, account.id);
+    expect(stored?.proxyCiphertext?.equals(proxy.ciphertext)).toBe(true);
+    expect(stored?.secretCiphertext.equals(fresh.ciphertext)).toBe(true);
+    expect((await getAccountByService(db, "twitch"))?.fingerprint).toMatchObject({ marker: "original" });
+
+    // An explicit null still clears it: that is what the manual form sends for an emptied field.
+    await replaceAccountSecret(db, account.id, {
+      method: "session_import",
+      secretCiphertext: fresh.ciphertext,
+      secretDataKey: fresh.wrappedDataKey,
+      proxyCiphertext: null,
+      proxyDataKey: null,
+    });
+    expect((await getAccountSecret(db, account.id))?.proxyCiphertext).toBeNull();
   });
 });

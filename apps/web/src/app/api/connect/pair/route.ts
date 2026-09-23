@@ -3,10 +3,10 @@ import { defaultRegistry } from "@uc/connectors";
 import { getService, hasConsent } from "@uc/db";
 import { getDb } from "@/server/context";
 import { jsonError } from "@/server/http";
-import { mintPairing } from "@/server/pairing";
+import { mintPairing, pairingIdFor } from "@/server/pairing";
 import { rateLimit } from "@/server/rate-limit";
 import { missingConfigKeys } from "@/server/schemas";
-import { requireAuth } from "@/server/session-cookie";
+import { isAuthenticated } from "@/server/session-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,9 @@ export const dynamic = "force-dynamic";
  * is looking at, instead of inside an extension popup that cannot explain it.
  */
 export async function POST(req: Request): Promise<NextResponse> {
-  requireAuth();
+  // A 401 the page can explain, rather than requireAuth's throw — which Next turns into a bare 500
+  // that the page could only report as "could not start the pairing".
+  if (!isAuthenticated()) return jsonError("UNAUTHENTICATED", "Sign in required.", 401);
   if (!rateLimit("pair", 20, 5 * 60 * 1000)) {
     return jsonError("RATE_LIMITED", "Too many attempts. Try again later.", 429);
   }
@@ -54,5 +56,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     return jsonError("CONFIG_REQUIRED", `Missing required config: ${missing.join(", ")}`, 400);
   }
 
-  return NextResponse.json({ token: mintPairing(service.id, config) });
+  const token = mintPairing(service.id, config);
+  // The id is what the page polls for the outcome. It is derived from the token one-way, so it can
+  // sit in a URL without being able to redeem anything.
+  return NextResponse.json({ token, pairingId: pairingIdFor(token) });
 }
