@@ -1,5 +1,5 @@
 import type { BrowserCookie } from "./connector.js";
-import { isAmazonAuthCookie } from "./primegaming/driver.js";
+import { isAmazonAuthCookie, signedInMarketplaces } from "./primegaming/driver.js";
 
 /**
  * A look at an imported session before it is stored: does it carry a sign-in at all?
@@ -23,12 +23,6 @@ export interface SessionCheck {
   warnings: string[];
 }
 
-/** `www.amazon.co.uk` → `amazon.co.uk`; null for anything that is not an Amazon storefront. */
-function amazonMarketplaceOf(domain: string): string | null {
-  const host = domain.replace(/^\./, "").toLowerCase();
-  const match = /(?:^|\.)(amazon\.[a-z]{2,3}(?:\.[a-z]{2})?)$/.exec(host);
-  return match ? match[1]! : null;
-}
 
 /** Whether a cookie is still good: session cookies count, expired ones do not. */
 function live(cookie: BrowserCookie, nowSec: number): boolean {
@@ -48,9 +42,8 @@ export function checkSession(
 
   if (serviceId === "primegaming") {
     const auth = cookies.filter((c) => isAmazonAuthCookie(c.name, c.domain) && live(c, nowSec));
-    const signedInOn = [
-      ...new Set(auth.map((c) => amazonMarketplaceOf(c.domain)).filter((m): m is string => !!m)),
-    ].sort();
+    // The same reading the claim makes, so what the page says here is what the run will try.
+    const signedInOn = signedInMarketplaces(cookies, now).sort();
     return {
       signInNames: [...new Set(auth.map((c) => c.name))].sort(),
       signedInOn,
