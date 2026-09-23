@@ -3,6 +3,7 @@ export * from "./cookies.js";
 export * from "./totp.js";
 export * from "./registry.js";
 export * from "./fingerprint.js";
+export { checkSession, type SessionCheck } from "./session-check.js";
 export { EpicConnector } from "./epic/index.js";
 export type { EpicPageDriver, EpicDriverFactory } from "./epic/index.js";
 export { TwitchConnector } from "./twitch/index.js";
