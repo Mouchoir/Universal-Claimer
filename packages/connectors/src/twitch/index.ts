@@ -17,6 +17,7 @@ import type {
 import type { Logger } from "@uc/core";
 import {
   PlaywrightTwitchDriver,
+  futureDate,
   type ResubResult,
   type SubEvidence,
   type SubKind,
@@ -79,6 +80,7 @@ function logVerdict(log: Logger, res: ResubResult): void {
     apiErrors: ev?.apiFirstError,
     apiUnavailable: ev?.apiUnavailable,
     listCount: ev?.listCount,
+    edgeCount: ev?.edgeCount,
     listHasChannel: ev?.listHasChannel,
     kind: ev?.kind,
     endsAt: ev?.endsAt,
@@ -197,13 +199,15 @@ export class TwitchConnector implements Connector, InteractiveLogin {
       // the dashboard shows them, and the sub's end date seeds the next automatic run. When the
       // API is what said the sub is active, its dates are the answer and there is nothing to ask
       // again; one that renews rather than ends is next due on its renewal date. After a resub
-      // the verdict predates it, so the new end date has to be read afresh.
+      // the verdict predates it, so the new end date has to be read afresh. Either way only a
+      // date still ahead is kept: this is when the next run falls due, and a live sub can carry
+      // a renewal date that has already passed.
       const ev = res.evidence;
       const holdsSub = Boolean(res.alreadyActive || res.subscribed);
       const endsAt = !holdsSub
         ? undefined
         : res.alreadyActive && ev?.decidedBy === "api"
-          ? (ev.endsAt ?? ev.renewsAt)
+          ? futureDate(ev.endsAt ?? ev.renewsAt)
           : await driver.getPrimeSubEnd(channel);
       const accountFacts = {
         username: await driver.getUsername(),

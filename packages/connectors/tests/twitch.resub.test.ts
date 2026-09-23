@@ -109,6 +109,19 @@ describe("PlaywrightTwitchDriver.resubWithPrime: how the verdict is reached", ()
     expect(clicks).toEqual([]);
   });
 
+  it("leaves a live sub of unknown kind alone while the page offers only the subscribe button", async () => {
+    // Neither Prime nor renewing, so the reply cannot say what it is, only that it runs. Kind
+    // does not enter the decision: the button on the page is no reason to subscribe again.
+    const reply = subsReply([
+      { endsAt: "2099-01-01T00:00:00Z", renewsAt: null, purchasedWithPrime: false, product: { owner: { login: "examplechannel" } } },
+    ]);
+    const { session, clicks } = fakeSession({ reply, present: [SUBSCRIBE_BUTTON] });
+    const res = await new PlaywrightTwitchDriver(session).resubWithPrime("examplechannel");
+    expect(res).toMatchObject({ subscribed: false, alreadyActive: true });
+    expect(res.evidence).toMatchObject({ decidedBy: "api", kind: "unknown", endsAt: "2099-01-01T00:00:00.000Z" });
+    expect(clicks).toEqual([]);
+  });
+
   it("resubscribes on the API's word when the sub has lapsed, whatever the page shows", async () => {
     const reply = subsReply([
       { endsAt: "2026-01-01T00:00:00Z", purchasedWithPrime: true, product: { owner: { login: "examplechannel" } } },
@@ -145,5 +158,39 @@ describe("PlaywrightTwitchDriver.resubWithPrime: how the verdict is reached", ()
       listHasChannel: false,
       subscribeishTargets: ["subscription-gift-button", "tier-selector"],
     });
+  });
+});
+
+describe("PlaywrightTwitchDriver.getPrimeSubEnd", () => {
+  const benefit = (over: Record<string, unknown>) => ({
+    endsAt: null,
+    renewsAt: null,
+    purchasedWithPrime: true,
+    product: { owner: { login: "examplechannel" } },
+    ...over,
+  });
+  const endOf = (nodes: unknown[]) =>
+    new PlaywrightTwitchDriver(fakeSession({ reply: subsReply(nodes), present: [] }).session).getPrimeSubEnd(
+      "examplechannel",
+    );
+
+  it("gives no date for a sub whose only date has already passed", async () => {
+    // That date would be the next on_expiry run, due at once and on every tick after.
+    expect(await endOf([benefit({ purchasedWithPrime: false, renewsAt: "2020-01-05T12:00:00Z" })])).toBeUndefined();
+    expect(await endOf([benefit({ endsAt: "2020-01-05T12:00:00Z" })])).toBeUndefined();
+  });
+
+  it("does not let a lapsed Prime entry listed first hide the live one", async () => {
+    const end = await endOf([
+      benefit({ endsAt: "2020-01-05T12:00:00Z" }),
+      benefit({ purchasedWithPrime: false, endsAt: "2098-01-01T00:00:00Z" }),
+      benefit({ endsAt: "2099-01-01T00:00:00Z" }),
+    ]);
+    expect(end).toBe("2099-01-01T00:00:00.000Z");
+  });
+
+  it("falls back to a renewal date still ahead when the sub has no end date", async () => {
+    const end = await endOf([benefit({ purchasedWithPrime: false, renewsAt: "2099-02-01T00:00:00Z" })]);
+    expect(end).toBe("2099-02-01T00:00:00.000Z");
   });
 });

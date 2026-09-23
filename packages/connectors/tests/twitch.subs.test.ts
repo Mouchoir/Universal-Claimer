@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  futureDate,
   hasActiveSub,
   parseSubscriptionBenefits,
   readSubscriptionReply,
@@ -112,6 +113,16 @@ describe("parseSubscriptionBenefits", () => {
       { channel: "otherchannel", purchasedWithPrime: true, unreadableDate: true },
     ]);
   });
+
+  it("drops a renewal date that does not parse without making the benefit unreadable", () => {
+    // Only the end date says whether a benefit runs; a bad renewal date can only cost the wording.
+    const raw = response([
+      { endsAt: "2026-10-16T21:13:40Z", renewsAt: "soon", purchasedWithPrime: false, product: { owner: { login: "examplechannel" } } },
+    ]);
+    expect(parseSubscriptionBenefits(raw)).toEqual([
+      { channel: "examplechannel", endsAt: "2026-10-16T21:13:40.000Z", purchasedWithPrime: false },
+    ]);
+  });
 });
 
 describe("readSubscriptionReply", () => {
@@ -167,6 +178,29 @@ describe("readSubscriptionReply", () => {
     expect(lookup.failure).toBeUndefined();
   });
 
+  it("counts the list's entries, and the ones it had to skip", () => {
+    const body = JSON.stringify([
+      {
+        errors: [{ message: "product unavailable" }],
+        data: {
+          currentUser: {
+            subscriptionBenefits: {
+              edges: [
+                { node: { endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: { owner: { login: "otherchannel" } } } },
+                { node: { endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: null } },
+                { node: null },
+                null,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    const lookup = readSubscriptionReply(200, body);
+    expect(lookup.subs).toHaveLength(1);
+    expect(lookup).toMatchObject({ edgeCount: 4, skippedEdges: 3, firstError: "product unavailable" });
+  });
+
   it("keeps an error message to one bounded line", () => {
     const long = `first line\n   second line ${"x".repeat(400)}`;
     const lookup = readSubscriptionReply(200, JSON.stringify({ errors: [{ message: long }] }));
@@ -215,7 +249,14 @@ describe("verdictFromApi", () => {
     expect(verdictFromApi(lookup(response([])), "examplechannel", NOW)).toEqual({
       known: true,
       active: false,
-      evidence: { decidedBy: "api", kind: "unknown", apiHttpStatus: 200, listCount: 0, listHasChannel: false },
+      evidence: {
+        decidedBy: "api",
+        kind: "unknown",
+        apiHttpStatus: 200,
+        listCount: 0,
+        edgeCount: 0,
+        listHasChannel: false,
+      },
     });
   });
 
@@ -233,6 +274,7 @@ describe("verdictFromApi", () => {
         endsAt: "2026-10-16T21:13:40.000Z",
         apiHttpStatus: 200,
         listCount: 2,
+        edgeCount: 2,
         listHasChannel: true,
       },
     });
@@ -246,6 +288,26 @@ describe("verdictFromApi", () => {
     expect(v).toMatchObject({ known: true, active: true });
     expect(v.evidence).toMatchObject({ decidedBy: "api", kind: "paid", renewsAt: "2026-10-05T12:00:00.000Z" });
     expect(v.evidence.endsAt).toBeUndefined();
+  });
+
+  it("reports a live sub that is neither Prime nor renewing as active, of unknown kind", () => {
+    // A gift, a cancelled sub or a promotion: the reply cannot say which, but it does say it runs.
+    const raw = response([
+      { endsAt: "2026-11-01T00:00:00Z", renewsAt: null, purchasedWithPrime: false, product: { owner: { login: "examplechannel" } } },
+    ]);
+    expect(verdictFromApi(lookup(raw), "examplechannel", NOW)).toEqual({
+      known: true,
+      active: true,
+      evidence: {
+        decidedBy: "api",
+        kind: "unknown",
+        endsAt: "2026-11-01T00:00:00.000Z",
+        apiHttpStatus: 200,
+        listCount: 1,
+        edgeCount: 1,
+        listHasChannel: true,
+      },
+    });
   });
 
   it("describes a lapsed sub by its latest end date, so the log shows why a renewal is due", () => {
@@ -279,9 +341,73 @@ describe("verdictFromApi", () => {
     });
   });
 
+  it("still trusts a readable future end date when the renewal date does not parse", () => {
+    const raw = response([
+      { endsAt: "2026-10-16T21:13:40Z", renewsAt: "soon", purchasedWithPrime: false, product: { owner: { login: "examplechannel" } } },
+    ]);
+    const v = verdictFromApi(lookup(raw), "examplechannel", NOW);
+    expect(v).toMatchObject({ known: true, active: true, evidence: { decidedBy: "api", endsAt: "2026-10-16T21:13:40.000Z" } });
+    expect(v.evidence.renewsAt).toBeUndefined();
+  });
+
   it("ignores a bad date on another channel", () => {
     const raw = response([{ endsAt: "soon", purchasedWithPrime: true, product: { owner: { login: "otherchannel" } } }]);
     expect(verdictFromApi(lookup(raw), "examplechannel", NOW)).toMatchObject({ known: true, active: false });
+  });
+
+  /** A partial result: an error, and a list in which Twitch nulled some entries' product. */
+  const partial = (nodes: unknown[]) =>
+    JSON.stringify([
+      {
+        errors: [{ message: "product unavailable" }],
+        data: { currentUser: { subscriptionBenefits: { edges: nodes.map((node) => ({ node })) } } },
+      },
+    ]);
+
+  it("leaves a list that an error left with holes to the page, when nothing live came through", () => {
+    // The entry whose product came back null may be this channel's live benefit.
+    const raw = partial([
+      { endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: null },
+      { endsAt: "2026-06-16T00:00:00Z", purchasedWithPrime: true, product: { owner: { login: "examplechannel" } } },
+    ]);
+    const v = verdictFromApi(lookup(raw), "examplechannel", NOW);
+    expect(v.known).toBe(false);
+    expect(v.evidence).toMatchObject({
+      decidedBy: "page",
+      kind: "unknown",
+      apiUnavailable: `the reply's list is incomplete ("product unavailable")`,
+      apiFirstError: "product unavailable",
+      listCount: 1,
+      edgeCount: 2,
+    });
+  });
+
+  it("still trusts a live benefit that came through a list with holes", () => {
+    const raw = partial([
+      { endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: null },
+      { endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: { owner: { login: "examplechannel" } } },
+    ]);
+    expect(verdictFromApi(lookup(raw), "examplechannel", NOW)).toMatchObject({ known: true, active: true });
+  });
+
+  it("reads an entry Twitch nulled without any error as its answer, not as a hole", () => {
+    const raw = response([{ endsAt: "2026-10-16T21:13:40Z", purchasedWithPrime: true, product: null }]);
+    expect(verdictFromApi(lookup(raw), "examplechannel", NOW)).toMatchObject({
+      known: true,
+      active: false,
+      evidence: { decidedBy: "api", listCount: 0, edgeCount: 1 },
+    });
+  });
+});
+
+describe("futureDate", () => {
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z");
+
+  it("keeps only a date that is still ahead", () => {
+    expect(futureDate("2026-10-05T12:00:00.000Z", NOW)).toBe("2026-10-05T12:00:00.000Z");
+    expect(futureDate("2026-09-05T12:00:00.000Z", NOW)).toBeUndefined();
+    expect(futureDate("2026-09-20T12:00:00.000Z", NOW)).toBeUndefined();
+    expect(futureDate(undefined, NOW)).toBeUndefined();
   });
 });
 

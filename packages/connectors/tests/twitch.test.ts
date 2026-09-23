@@ -29,8 +29,6 @@ function fakeDriver(over: Partial<TwitchPageDriver>): TwitchPageDriver {
     resubWithPrime: async () => ({ subscribed: true }),
     getUsername: async () => "ExampleUser",
     getPrimeSubEnd: async () => "2026-08-25T00:00:00.000Z",
-    // null = "Twitch could not be asked", which is what a fake with no opinion should say.
-    isSubscribedTo: async () => null,
     getCookies: async () => [],
     goto: async () => {},
     ...over,
@@ -157,7 +155,7 @@ describe("TwitchConnector: an active sub says how it was decided", () => {
           resubWithPrime: async () => ({
             subscribed: false,
             alreadyActive: true,
-            evidence: fromApi({ kind: "prime", endsAt: "2026-10-16T21:13:40.000Z" }),
+            evidence: fromApi({ kind: "prime", endsAt: "2099-10-16T21:13:40.000Z" }),
           }),
           getPrimeSubEnd: async () => {
             asked += 1;
@@ -167,9 +165,9 @@ describe("TwitchConnector: an active sub says how it was decided", () => {
     });
     const res = await c.claim(session, fp, { channel: "examplechannel" }, makeCtx().ctx);
     expect(res.outcome).toBe("nothing_to_claim");
-    expect(res.summary).toBe(`Prime sub to "examplechannel" is active until 2026-10-16 (from Twitch's API).`);
+    expect(res.summary).toBe(`Prime sub to "examplechannel" is active until 2099-10-16 (from Twitch's API).`);
     expect(res.accountFacts?.entitlements).toEqual([
-      { kind: "prime_sub", channel: "examplechannel", endsAt: "2026-10-16T21:13:40.000Z" },
+      { kind: "prime_sub", channel: "examplechannel", endsAt: "2099-10-16T21:13:40.000Z" },
     ]);
     // The API already answered with the dates; asking it again would only risk a different answer.
     expect(asked).toBe(0);
@@ -182,12 +180,38 @@ describe("TwitchConnector: an active sub says how it was decided", () => {
           resubWithPrime: async () => ({
             subscribed: false,
             alreadyActive: true,
-            evidence: fromApi({ kind: "paid", renewsAt: "2026-10-05T12:00:00.000Z" }),
+            evidence: fromApi({ kind: "paid", renewsAt: "2099-10-05T12:00:00.000Z" }),
           }),
         }),
     });
     const res = await c.claim(session, fp, { channel: "examplechannel" }, makeCtx().ctx);
-    expect(res.accountFacts?.entitlements?.[0]?.endsAt).toBe("2026-10-05T12:00:00.000Z");
+    expect(res.accountFacts?.entitlements?.[0]?.endsAt).toBe("2099-10-05T12:00:00.000Z");
+  });
+
+  it("hands on no date for a live sub whose renewal date has already passed", async () => {
+    // The API counts a benefit with no end date as live whatever its renewal date says. Handing
+    // that past date on would make the next on_expiry run due at once, and on every tick after.
+    let asked = 0;
+    const c = new TwitchConnector({
+      createDriver: () =>
+        fakeDriver({
+          resubWithPrime: async () => ({
+            subscribed: false,
+            alreadyActive: true,
+            evidence: fromApi({ kind: "paid", renewsAt: "2020-01-05T12:00:00.000Z" }),
+          }),
+          getPrimeSubEnd: async () => {
+            asked += 1;
+            return "2099-01-01T00:00:00.000Z";
+          },
+        }),
+    });
+    const res = await c.claim(session, fp, { channel: "examplechannel" }, makeCtx().ctx);
+    expect(res.outcome).toBe("nothing_to_claim");
+    expect(res.accountFacts?.entitlements).toEqual([
+      { kind: "prime_sub", channel: "examplechannel", endsAt: undefined },
+    ]);
+    expect(asked).toBe(0);
   });
 
   it("words a page verdict with the API's failure and still reads the end date", async () => {
@@ -272,6 +296,7 @@ describe("TwitchConnector: an active sub says how it was decided", () => {
               renewsAt: "2026-10-05T12:00:00.000Z",
               apiHttpStatus: 200,
               listCount: 3,
+              edgeCount: 4,
               listHasChannel: true,
             }),
           }),
@@ -284,6 +309,7 @@ describe("TwitchConnector: an active sub says how it was decided", () => {
       decidedBy: "api",
       apiHttpStatus: 200,
       listCount: 3,
+      edgeCount: 4,
       listHasChannel: true,
       kind: "paid",
       renewsAt: "2026-10-05T12:00:00.000Z",

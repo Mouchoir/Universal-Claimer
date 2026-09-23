@@ -46,6 +46,11 @@ export interface SubEvidence {
   apiFirstError?: string;
   /** How many benefits the API listed, when it listed them. */
   listCount?: number;
+  /**
+   * How many entries the API's list held before any was skipped. The query asks for the first
+   * 100, so 100 here says the list may have been cut short.
+   */
+  edgeCount?: number;
   /** Whether that list mentions the channel at all, live or lapsed. */
   listHasChannel?: boolean;
   /** The page's subscribe-like `data-a-target` values, when they were read. */
@@ -67,14 +72,9 @@ export interface TwitchPageDriver {
   getUsername(): Promise<string | undefined>;
   /**
    * When the sub to `channel` ends (ISO), or next renews when it has no end, preferring the
-   * Prime-purchased one; undefined when none is readable.
+   * Prime-purchased one; undefined when none is readable or that date has already passed.
    */
   getPrimeSubEnd(channel: string): Promise<string | undefined>;
-  /**
-   * Whether the account subscribes to `channel`, per Twitch's own subscription list.
-   * Null when Twitch could not be asked — the caller then falls back to reading the page.
-   */
-  isSubscribedTo(channel: string): Promise<boolean | null>;
   getCookies(): Promise<BrowserCookie[]>;
   goto(url: string): Promise<void>;
 }
@@ -90,8 +90,10 @@ export interface SubscriptionInfo {
   renewsAt?: string;
   purchasedWithPrime: boolean;
   /**
-   * Twitch gave a date for this benefit that does not parse. Dropping it would make the benefit
-   * look permanent, which is the answer that skips a renewal, so whether it runs is unknown.
+   * Twitch gave an end date for this benefit that does not parse. Dropping it would make the
+   * benefit look permanent, which is the answer that skips a renewal, so whether it runs is
+   * unknown. A renewal date that does not parse is simply dropped: it never decides whether a
+   * benefit runs, only how the summary words it.
    */
   unreadableDate?: true;
 }
@@ -106,6 +108,19 @@ export interface SubscriptionLookup {
   firstError?: string;
   /** Why `subs` is null, worded to follow "Twitch's API could not be asked: ". */
   failure?: string;
+  /** How many entries the reply's list held, skipped ones included, when it carried a list. */
+  edgeCount?: number;
+  /** Entries left out of `subs` for carrying no benefit or no channel login to match on. */
+  skippedEdges?: number;
+}
+
+/**
+ * `iso` when it lies ahead of `now`, else undefined. A date handed on as the entitlement's end
+ * is when the next automatic run falls due: one already past is due at once, and again on every
+ * scheduler tick after it, since re-reading the same past date never moves it.
+ */
+export function futureDate(iso: string | undefined, now: number = Date.now()): string | undefined {
+  return iso !== undefined && Date.parse(iso) > now ? iso : undefined;
 }
 
 /** One line, bounded: this ends up in a run summary and a log line, never a wall of stack. */
@@ -165,7 +180,9 @@ function firstErrorOf(result: GqlResult | undefined): string | undefined {
  * not subscribed", and the renewal ran against a page that could have said otherwise.
  *
  * Errors that come alongside a readable list are GraphQL's partial result: the fields that failed
- * resolve to null and the rest stands, so the list is kept and the error recorded.
+ * resolve to null and the rest stands, so the list is kept and the error recorded. An entry that
+ * lost its benefit or its channel that way cannot be matched to any channel, so it is left out
+ * but counted: a list with holes in it is no proof that a channel is missing from it.
  */
 export function readSubscriptionReply(status: number, body: string): SubscriptionLookup {
   let payload: unknown;
@@ -203,23 +220,30 @@ export function readSubscriptionReply(status: number, body: string): Subscriptio
     }
 
     const subs: SubscriptionInfo[] = [];
+    let skippedEdges = 0;
     for (const edge of edges as ({ node?: GqlNode } | null)[]) {
       const node = edge?.node;
       const login = node?.product?.owner?.login;
       const channel = typeof login === "string" ? login.trim().toLowerCase() : "";
-      if (!node || !channel) continue;
+      if (!node || !channel) {
+        skippedEdges += 1;
+        continue;
+      }
       const endsAt = isoDate(node.endsAt);
+      // Only the end date decides whether a benefit runs (see hasActiveSub), so only a bad one
+      // makes the answer unknown. A bad renewal date is dropped: it costs the summary its
+      // "renewing on" wording and the paid kind, nothing that decides a renewal, and flagging it
+      // too turned a live sub with a readable end date into an unknown one.
       const renewsAt = isoDate(node.renewsAt);
-      const unreadable = endsAt === undefined || renewsAt === undefined;
       subs.push({
         channel,
         ...(endsAt ? { endsAt } : {}),
         ...(renewsAt ? { renewsAt } : {}),
         purchasedWithPrime: node.purchasedWithPrime === true,
-        ...(unreadable ? { unreadableDate: true as const } : {}),
+        ...(endsAt === undefined ? { unreadableDate: true as const } : {}),
       });
     }
-    return { subs, ...noted };
+    return { subs, ...noted, edgeCount: edges.length, skippedEdges };
   } catch (err) {
     // Nothing above should throw, but a claim must never die on the shape of a reply: whatever
     // did is "could not ask", not "subscribed to nothing".
@@ -288,6 +312,7 @@ export function verdictFromApi(
     ...(lookup.httpStatus !== undefined ? { apiHttpStatus: lookup.httpStatus } : {}),
     ...(lookup.firstError ? { apiFirstError: lookup.firstError } : {}),
     ...(lookup.subs ? { listCount: lookup.subs.length, listHasChannel: mine.length > 0 } : {}),
+    ...(lookup.edgeCount !== undefined ? { edgeCount: lookup.edgeCount } : {}),
   };
   const unknown = (why: string): ApiVerdict => ({
     known: false,
@@ -298,9 +323,14 @@ export function verdictFromApi(
 
   const live = mine.filter((s) => hasActiveSub([s], wanted, now));
   // A live benefit settles it whatever else is listed. Without one, "not subscribed" holds only
-  // if every benefit for the channel could be read: one with a bad date may be the live one.
+  // if the whole list could be read: a benefit for the channel with a bad date may be the live
+  // one, and so may an entry that an error in the reply left with no channel to match on. An
+  // entry skipped with no error beside it is Twitch's own null, not a hole.
   if (live.length === 0 && mine.some((s) => s.unreadableDate)) {
     return unknown("the reply's date for this channel does not parse");
+  }
+  if (live.length === 0 && lookup.firstError && (lookup.skippedEdges ?? 0) > 0) {
+    return unknown(`the reply's list is incomplete ("${lookup.firstError}")`);
   }
   // Describe the live benefit when there is one, the Prime one first. Otherwise the one that
   // lapsed last: its past end date is what says the renewal is due. By then every benefit for
@@ -541,22 +571,19 @@ export class PlaywrightTwitchDriver implements TwitchPageDriver {
   }
 
   /**
-   * Whether the account currently subscribes to `channel`, according to Twitch itself.
-   * Null when Twitch could not be asked, so the caller can fall back rather than guess.
+   * When the sub to `channel` ends (ISO), or next renews when it has no end date, as long as that
+   * date is still ahead (see `futureDate`).
    */
-  async isSubscribedTo(channel: string): Promise<boolean | null> {
-    const api = verdictFromApi(await this.lookupSubscriptions(), channel);
-    return api.known ? api.active : null;
-  }
-
-  /** When the sub to `channel` ends (ISO), or next renews when it has no end date. */
   async getPrimeSubEnd(channel: string): Promise<string | undefined> {
     const wanted = channel.trim().toLowerCase();
     const subs = (await this.lookupSubscriptions()).subs ?? [];
-    // Prefer the Prime-purchased entry for this channel; fall back to any sub to it.
-    const match =
-      subs.find((s) => s.channel === wanted && s.purchasedWithPrime) ??
-      subs.find((s) => s.channel === wanted);
+    const now = Date.now();
+    // Only entries whose date is still ahead are candidates, so a lapsed Prime entry listed
+    // before the live one cannot hide it. Prefer the Prime-purchased one; fall back to any.
+    const dated = subs.filter(
+      (s) => s.channel === wanted && futureDate(s.endsAt ?? s.renewsAt, now) !== undefined,
+    );
+    const match = dated.find((s) => s.purchasedWithPrime) ?? dated[0];
     return match?.endsAt ?? match?.renewsAt;
   }
 
