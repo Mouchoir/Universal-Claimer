@@ -9,7 +9,7 @@ import {
 } from "@uc/db";
 import { getDb, getMasterKey } from "@/server/context";
 import { jsonError } from "@/server/http";
-import { redeemPairing } from "@/server/pairing";
+import { redeemPairing, settlePairing } from "@/server/pairing";
 import { rateLimit } from "@/server/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -80,50 +80,76 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
   const { serviceId, config } = pairing;
 
+  // From here on the page that minted the pairing is waiting on its outcome, so every way out
+  // records one. A refusal the page cannot see is a refusal that reads as "nothing happened".
+  const refuse = (code: string, message: string, status: number) => {
+    settlePairing(token, { state: "failed", error: { code, message } });
+    return fail(code, message, status);
+  };
+
   let cookies;
   try {
     cookies = parseCookiesTxt(cookiesText);
   } catch {
-    return fail("AUTH_FAILED", "Could not parse the provided cookies.", 422);
+    log.warn("rejected: unparseable cookies", { serviceId });
+    return refuse("AUTH_FAILED", "Could not parse the provided cookies.", 422);
   }
   if (cookies.length === 0) {
     log.warn("rejected: no usable cookies in the payload", { serviceId });
-    return fail("AUTH_FAILED", "No valid cookies were provided.", 422);
+    return refuse("AUTH_FAILED", "No valid cookies were provided.", 422);
   }
 
   // Which hosts the session actually covers. Names only — never values. This is what would have
   // shown at a glance that a Prime Gaming export carried no amazon.fr cookies at all.
-  log.info("session received", {
-    serviceId,
-    cookies: cookies.length,
-    hosts: [...new Set(cookies.map((c) => c.domain.replace(/^\./, "")))].sort(),
-  });
+  const hosts = [...new Set(cookies.map((c) => c.domain.replace(/^\./, "")))].sort();
+  // `count`, not `cookies`: the logger redacts any key that mentions cookies, which is right for
+  // values and had been hiding this number since the line was added.
+  log.info("session received", { serviceId, count: cookies.length, hosts });
 
-  const { db } = getDb();
-  const sealed = sealSecret(JSON.stringify({ cookies }), getMasterKey());
-  const values = {
-    method: "session_import" as const,
-    secretCiphertext: sealed.ciphertext,
-    secretDataKey: sealed.wrappedDataKey,
-    fingerprint: defaultFingerprint(),
-    // Whatever the operator filled in on the page when the pairing was minted.
-    config,
-    proxyCiphertext: null,
-    proxyDataKey: null,
-  };
+  try {
+    const { db } = getDb();
+    const sealed = sealSecret(JSON.stringify({ cookies }), getMasterKey());
+    const secret = {
+      method: "session_import" as const,
+      secretCiphertext: sealed.ciphertext,
+      secretDataKey: sealed.wrappedDataKey,
+      // Whatever the operator filled in on the page when the pairing was minted.
+      config,
+    };
 
-  const existing = await getAccountByService(db, serviceId);
-  if (existing) {
-    await replaceAccountSecret(db, existing.id, values);
-    // The usual reason a connector auto-disabled is the session just replaced.
-    await reenableConnector(db, serviceId);
-    const res = NextResponse.json({ ok: true, serviceId, reconnected: true });
+    const existing = await getAccountByService(db, serviceId);
+    if (existing) {
+      // Only the session is replaced. The proxy and browser fingerprint are left as they were:
+      // this path has no way to ask for a proxy, so writing one here could only ever erase it.
+      await replaceAccountSecret(db, existing.id, secret);
+      // The usual reason a connector auto-disabled is the session just replaced.
+      await reenableConnector(db, serviceId);
+    } else {
+      await createAccount(db, {
+        serviceId,
+        ...secret,
+        fingerprint: defaultFingerprint(),
+        proxyCiphertext: null,
+        proxyDataKey: null,
+      });
+    }
+
+    const reconnected = Boolean(existing);
+    settlePairing(token, { state: "connected", reconnected, cookieCount: cookies.length, hosts });
+    log.info("session stored", { serviceId, reconnected });
+    const res = NextResponse.json(
+      { ok: true, serviceId, reconnected },
+      { status: reconnected ? 200 : 201 },
+    );
     for (const [k, v] of Object.entries(CORS)) res.headers.set(k, v);
     return res;
+  } catch (err) {
+    // Without this a database hiccup was a bare 500 with no CORS headers — which the extension
+    // reports as a network error — and no line in the log to say it happened.
+    log.error("could not store the session", {
+      serviceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return refuse("INTERNAL", "The instance could not save the session. Check its logs.", 500);
   }
-
-  await createAccount(db, { serviceId, ...values });
-  const res = NextResponse.json({ ok: true, serviceId, reconnected: false }, { status: 201 });
-  for (const [k, v] of Object.entries(CORS)) res.headers.set(k, v);
-  return res;
 }

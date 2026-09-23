@@ -161,9 +161,13 @@ export async function createAccount(db: Database, input: NewAccount): Promise<Ac
 }
 
 /**
- * Replace a connected account's stored secret (and optionally its config/proxy) — this is what
- * "reconnect" does when a service's session has expired. The account id, history and schedule are
- * kept; the status returns to `connected`.
+ * Replace a connected account's stored secret (and optionally its config/proxy/fingerprint) — this
+ * is what "reconnect" does when a service's session has expired. The account id, history and
+ * schedule are kept; the status returns to `connected`.
+ *
+ * "Optionally" means an omitted field is left alone. Passing `null` clears the proxy; leaving it
+ * out keeps it. This used to write `null` for an omitted proxy, so a reconnect from a path with no
+ * proxy field silently dropped the one the operator had configured.
  */
 export async function replaceAccountSecret(
   db: Database,
@@ -172,7 +176,7 @@ export async function replaceAccountSecret(
     method: ConnectionMethod;
     secretCiphertext: Buffer;
     secretDataKey: Buffer;
-    fingerprint: unknown;
+    fingerprint?: unknown;
     config?: Record<string, string>;
     proxyCiphertext?: Buffer | null;
     proxyDataKey?: Buffer | null;
@@ -184,10 +188,11 @@ export async function replaceAccountSecret(
       method: input.method,
       secretCiphertext: input.secretCiphertext,
       secretDataKey: input.secretDataKey,
-      fingerprint: input.fingerprint,
+      ...(input.fingerprint !== undefined ? { fingerprint: input.fingerprint } : {}),
       ...(input.config ? { config: input.config } : {}),
-      proxyCiphertext: input.proxyCiphertext ?? null,
-      proxyDataKey: input.proxyDataKey ?? null,
+      ...(input.proxyCiphertext !== undefined
+        ? { proxyCiphertext: input.proxyCiphertext, proxyDataKey: input.proxyDataKey ?? null }
+        : {}),
       status: "connected",
       updatedAt: new Date(),
     })

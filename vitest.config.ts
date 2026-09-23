@@ -1,6 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // The web app's `@/` import alias, so its route handlers can be tested as they are written.
+  resolve: {
+    alias: [
+      { find: /^@\//, replacement: fileURLToPath(new URL("./apps/web/src/", import.meta.url)) },
+    ],
+  },
   // The web tsconfig uses `jsx: preserve` because Next compiles the JSX itself; vitest does not
   // go through Next, so it needs the automatic runtime spelled out here.
   esbuild: { jsx: "automatic" },

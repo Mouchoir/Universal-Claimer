@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mintPairing, pairingPending, redeemPairing, resetPairings } from "./pairing.js";
+import {
+  mintPairing,
+  pairingIdFor,
+  pairingPending,
+  pairingStatus,
+  redeemPairing,
+  resetPairings,
+  settlePairing,
+} from "./pairing.js";
 
 /**
  * A pairing token is the only thing standing between an unauthenticated request and overwriting a
@@ -92,5 +100,109 @@ describe("bounds", () => {
     const later = mintPairing("epic", {}, T0 + 11 * MINUTE);
     // Minting sweeps; the first token is gone by now and cannot be redeemed.
     expect(pairingPending(later, T0 + 11 * MINUTE)).toBe(true);
+  });
+});
+
+describe("pairing outcome", () => {
+  // The page that minted a pairing waits on this. Before it existed the page waited on "does an
+  // account exist for this service", which every reconnect answers yes to at once — so it left
+  // two seconds in, before anything was sent.
+
+  it("starts pending and is not settled by the account merely existing", () => {
+    const token = mintPairing("primegaming", {}, T0);
+    expect(pairingStatus(pairingIdFor(token), T0 + MINUTE)).toEqual({
+      state: "pending",
+      serviceId: "primegaming",
+    });
+  });
+
+  it("goes processing on redemption, then connected with what arrived", () => {
+    const token = mintPairing("epic", {}, T0);
+    const id = pairingIdFor(token);
+    expect(redeemPairing(token, T0)?.serviceId).toBe("epic");
+    expect(pairingStatus(id, T0)?.state).toBe("processing");
+
+    settlePairing(
+      token,
+      { state: "connected", reconnected: true, cookieCount: 12, hosts: ["epicgames.com"] },
+      T0,
+    );
+    expect(pairingStatus(id, T0)).toEqual({
+      state: "connected",
+      serviceId: "epic",
+      reconnected: true,
+      cookieCount: 12,
+      hosts: ["epicgames.com"],
+    });
+  });
+
+  it("reports a refusal with its reason", () => {
+    const token = mintPairing("primegaming", {}, T0);
+    redeemPairing(token, T0);
+    settlePairing(
+      token,
+      { state: "failed", error: { code: "AUTH_FAILED", message: "No valid cookies were provided." } },
+      T0,
+    );
+    const status = pairingStatus(pairingIdFor(token), T0);
+    expect(status?.state).toBe("failed");
+    expect(status?.error?.message).toBe("No valid cookies were provided.");
+  });
+
+  it("reports a window that closed with nothing sent as expired, not unknown", () => {
+    const token = mintPairing("twitch", {}, T0);
+    expect(pairingStatus(pairingIdFor(token), T0 + 11 * MINUTE)?.state).toBe("expired");
+  });
+
+  it("reports a pairing evicted by the cap as expired", () => {
+    const first = mintPairing("twitch", {}, T0);
+    for (let i = 1; i <= 40; i++) mintPairing("twitch", {}, T0 + i);
+    expect(pairingStatus(pairingIdFor(first), T0 + 50)?.state).toBe("expired");
+  });
+
+  it("knows nothing of an id it never minted, as after a restart", () => {
+    expect(pairingStatus(pairingIdFor("never-minted"), T0)).toBeNull();
+  });
+
+  it("does not invent an outcome for a pairing that was never redeemed", () => {
+    // Settling is only meaningful after a redemption. Accepting it earlier would let the page
+    // report a connection that did not happen.
+    const token = mintPairing("twitch", {}, T0);
+    settlePairing(token, { state: "connected", cookieCount: 1, hosts: [] }, T0);
+    expect(pairingStatus(pairingIdFor(token), T0)?.state).toBe("pending");
+    expect(redeemPairing(token, T0)?.serviceId).toBe("twitch");
+  });
+
+  it("does not let a settled outcome be overwritten", () => {
+    const token = mintPairing("epic", {}, T0);
+    redeemPairing(token, T0);
+    settlePairing(token, { state: "connected", cookieCount: 3, hosts: [] }, T0);
+    settlePairing(token, { state: "failed", error: { code: "X", message: "late" } }, T0);
+    expect(pairingStatus(pairingIdFor(token), T0)?.state).toBe("connected");
+  });
+
+  it("forgets settled outcomes after a while", () => {
+    const token = mintPairing("epic", {}, T0);
+    redeemPairing(token, T0);
+    settlePairing(token, { state: "connected", cookieCount: 3, hosts: [] }, T0);
+    expect(pairingStatus(pairingIdFor(token), T0 + 11 * MINUTE)).toBeNull();
+  });
+});
+
+describe("pairingIdFor", () => {
+  // The id travels in URLs and poll requests; the token must not be recoverable from it, and the
+  // id must not work as a token.
+
+  it("is stable, and is not the token", () => {
+    const token = mintPairing("twitch", {}, T0);
+    expect(pairingIdFor(token)).toBe(pairingIdFor(token));
+    expect(pairingIdFor(token)).not.toBe(token);
+    expect(pairingIdFor(token)).not.toContain(token);
+  });
+
+  it("cannot be redeemed in place of the token", () => {
+    const token = mintPairing("twitch", {}, T0);
+    expect(redeemPairing(pairingIdFor(token), T0)).toBeNull();
+    expect(pairingPending(token, T0)).toBe(true);
   });
 });

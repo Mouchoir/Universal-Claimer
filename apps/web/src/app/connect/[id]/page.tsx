@@ -216,7 +216,13 @@ export default function ConnectPage() {
             <ExtensionSetup
               serviceId={serviceId}
               config={config}
-              onConnected={() => router.push("/dashboard")}
+              onConnected={() => {
+                // refresh() as well as push(): the dashboard is a server component, and the
+                // client router would otherwise be free to serve a cached render from before the
+                // reconnect, still saying the session expired.
+                router.refresh();
+                router.push("/dashboard");
+              }}
             />
           </div>
 
