@@ -15,13 +15,103 @@ import type {
 } from "../connector.js";
 import {
   PlaywrightPrimeGamingDriver,
+  isLunaHost,
   platformFromOfferUrl,
+  type AuthReport,
   type PrimeGamingDriverFactory,
+  type PrimeGamingPageDriver,
   type PrimeOffer,
+  type SignInAttempt,
 } from "./driver.js";
 
 const PRIME_GAMING_URL = "https://gaming.amazon.com";
 const PRIME_CAPTCHA_KEY = "prime-gaming-key-placeholder";
+
+const REEXPORT = "in your browser, then re-export the session and reconnect.";
+
+/** "a", "a and b", "a, b and c". */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** "gaming.amazon.com (served luna.amazon.com), luna.amazon.co.jp (unreachable)". */
+function describeAttempts(attempts: SignInAttempt[]): string {
+  return attempts
+    .map((a) => {
+      if (a.navError) return `${a.requested} (unreachable)`;
+      return a.served && a.served !== a.requested ? `${a.requested} (served ${a.served})` : a.requested;
+    })
+    .join(", ");
+}
+
+/**
+ * The reauth_needed message, built from what the sign-in check actually saw.
+ *
+ * Amazon signs you in per marketplace and Luna serves each marketplace on its own host, so
+ * "sign in again" only helps when it names the operator's own Luna host. Naming whatever host
+ * happened to be served sent accounts signed in only on amazon.fr to sign in on
+ * luna.amazon.com, a page that can never see their sign-in. So the advice only ever names the
+ * Luna host of a marketplace the session is signed in on, and says what each one showed.
+ */
+export function reauthSummary(report: AuthReport): string {
+  const tried = report.attempts.length ? ` Tried: ${describeAttempts(report.attempts)}.` : "";
+  if (report.marketplaces.length === 0) {
+    return (
+      "No Amazon sign-in found in the session: it holds no unexpired Amazon auth cookie on any " +
+      "marketplace. Sign in on your own marketplace's Luna page (luna.amazon.fr for amazon.fr, " +
+      `luna.amazon.com for amazon.com, and so on) ${REEXPORT}${tried}`
+    );
+  }
+
+  const findings: string[] = [];
+  const refused: string[] = [];
+  for (const marketplace of report.marketplaces) {
+    const host = `luna.${marketplace}`;
+    const served = report.attempts.find((a) => a.served === host);
+    const asked = report.attempts.find((a) => a.requested === host);
+    if (served) {
+      findings.push(`${host} showed the account signed out`);
+      refused.push(host);
+    } else if (asked?.navError) {
+      findings.push(`${host} could not be reached`);
+    } else if (asked) {
+      findings.push(
+        `${host} redirected to ${asked.served || "another page"}, which showed the account signed out`,
+      );
+      refused.push(host);
+    } else {
+      findings.push(`${host} was not checked`);
+      refused.push(host);
+    }
+  }
+
+  // gaming.amazon.com reads the .com identity and sends it to the account's own Luna host. When
+  // that host belongs to a marketplace the session is not signed in on, Amazon has just said
+  // where the account lives, and that is the page to sign in on rather than luna.amazon.com.
+  const entry = report.attempts[0];
+  const routedHome =
+    report.marketplaces.includes("amazon.com") &&
+    entry &&
+    isLunaHost(entry.served) &&
+    !report.marketplaces.some((m) => `luna.${m}` === entry.served)
+      ? entry.served
+      : undefined;
+
+  let advice: string;
+  if (routedHome) {
+    advice =
+      ` Amazon routes this account to ${routedHome}, so that is its own marketplace's Luna page: ` +
+      `sign in on ${routedHome} ${REEXPORT}`;
+  } else if (refused.length) {
+    advice = ` The sign-in there has expired or Amazon rejected it: sign in again on ${listOf(refused)} ${REEXPORT}`;
+  } else {
+    advice =
+      " No Luna page could be reached for the marketplaces this session is signed in on, so it has " +
+      "nowhere to claim from.";
+  }
+  return `Signed in on ${listOf(report.marketplaces)}, but ${listOf(findings)}.${advice}${tried}`;
+}
 
 /**
  * Amazon Prime Gaming connector: claims the free games included with Prime. Orchestration is
@@ -48,11 +138,11 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
       const driver = this.createDriver(session);
       if (input.method === "session_import") {
         await driver.applyCookies(input.cookies);
-        const ok = await driver.isAuthenticated();
+        const ok = await this.checkSignIn(driver, ctx);
         return {
           ok,
           fingerprint,
-          reason: ok ? undefined : "Amazon session is not authenticated (expired or invalid cookies)",
+          reason: ok ? undefined : reauthSummary(await driver.authReport()),
         };
       }
       // Amazon's password flow is heavily challenged (OTP, device verification); session import
@@ -79,17 +169,11 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
     try {
       if (input.method === "session_import") await driver.applyCookies(input.cookies);
 
-      if (!(await driver.isAuthenticated())) {
-        // Amazon signs you in per marketplace and Prime Gaming routes by region, so a session
-        // that is perfectly valid on one Amazon domain can land signed-out on another. Naming
-        // the host that was actually served turns a dead end into an actionable message.
-        const host = await driver.servedHost();
-        return {
-          outcome: "reauth_needed",
-          summary:
-            `Not signed in on ${host}, which is where Prime Gaming served your region. ` +
-            `Sign in on ${host} in your browser, then re-export the session and reconnect.`,
-        };
+      if (!(await this.checkSignIn(driver, ctx))) {
+        // Amazon signs you in per marketplace, so a session that is perfectly valid on one
+        // Amazon domain is signed out on another. Saying which marketplaces the session holds
+        // and what each Luna host showed turns a dead end into an actionable message.
+        return { outcome: "reauth_needed", summary: reauthSummary(await driver.authReport()) };
       }
       authenticated = true;
 
@@ -169,6 +253,22 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
     }
   }
 
+  /**
+   * Run the sign-in check and log where it looked. The log carries marketplace and host names
+   * only, never a cookie: which Luna host accepted or refused the session is exactly what is
+   * needed to tell a lapsed sign-in from a wrong-marketplace one after the fact.
+   */
+  private async checkSignIn(driver: PrimeGamingPageDriver, ctx: ConnectorContext): Promise<boolean> {
+    const signedIn = await driver.isAuthenticated();
+    const report = await driver.authReport();
+    ctx.log.info("prime gaming sign-in check", {
+      signedIn,
+      marketplaces: report.marketplaces,
+      attempts: report.attempts,
+    });
+    return signedIn;
+  }
+
   async healthCheck(_ctx: ConnectorContext): Promise<HealthResult> {
     return { healthy: true };
   }
@@ -185,4 +285,10 @@ export class PrimeGamingConnector implements Connector, InteractiveLogin {
 }
 
 export { PlaywrightPrimeGamingDriver } from "./driver.js";
-export type { PrimeGamingPageDriver, PrimeGamingDriverFactory, PrimeOffer } from "./driver.js";
+export type {
+  AuthReport,
+  PrimeGamingPageDriver,
+  PrimeGamingDriverFactory,
+  PrimeOffer,
+  SignInAttempt,
+} from "./driver.js";

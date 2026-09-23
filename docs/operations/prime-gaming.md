@@ -8,7 +8,9 @@ Prime Gaming only supports **session import**. Amazon's password flow is heavily
 (OTP, device verification, CAPTCHAs), so the connector deliberately refuses `credential_totp`
 and points you at session import instead:
 
-1. Sign in to `amazon.com` / `gaming.amazon.com` in your normal browser.
+1. Sign in on **your own marketplace's Luna page** in your normal browser: `luna.amazon.fr` for
+   an amazon.fr account, `luna.amazon.co.uk` for amazon.co.uk, and so on. Sign in on
+   `luna.amazon.com` only when amazon.com is your marketplace.
 2. Export the cookies with the [session exporter extension](https://github.com/Mouchoir/universal-claimer-extension)
    (pick **Amazon Prime Gaming**).
 3. In Universal Claimer: `/connect/primegaming` → **Session import** → paste → connect.
@@ -25,17 +27,41 @@ query set, so hand-written queries are not a viable path.
 
 ## Marketplaces (read this if it says you are not signed in)
 
-Amazon signs you in **per marketplace**, and Prime Gaming **routes by region**. Those two facts
-combine badly: an account with a perfectly valid session on `amazon.com` gets served
-`luna.amazon.fr` from France and arrives there signed out. The offers still list (they are
-public), but nothing can be claimed.
+Amazon signs you in **per marketplace**: the auth cookie is `at-main` on `.amazon.com` and
+`at-acb<country>` elsewhere (`at-acbfr` on `.amazon.fr`, `at-acbde` on `.amazon.de`), and Luna
+serves each marketplace on its own host, `https://luna.amazon.<marketplace>/claims/home`.
 
-So sign in on the host Prime Gaming actually serves you — the connector names it in the failure
-message — and export the session from there. The exporter covers every Amazon marketplace, and a
-cookie lookup on the registrable domain also picks up `luna.`/`gaming.` subdomains.
+The `gaming.amazon.com` entry point only sees `.amazon.com` cookies, which is what used to go
+wrong. A session signed in on amazon.com is recognized there and sent to the account's own Luna
+host (`luna.amazon.fr` for a French account). A session signed in only on amazon.fr looks
+anonymous to it and is sent to `luna.amazon.com`, where that account is signed out. The offers
+still list there (they are public), so nothing looked wrong until the claim failed.
 
-Authentication is checked on the page itself (`data-a-target="sign-in-button"`), not by sniffing
-cookie names: the cookie check reported success on a session that could not claim anything.
+So the sign-in check works in two steps:
+
+1. It opens `gaming.amazon.com/home` and asks the page it lands on, exactly as before. If that
+   page is signed in, offers are listed on that same Luna host.
+2. If it is signed out, the connector reads which marketplaces the imported cookies hold a live
+   auth cookie for (non-empty and not expired, the most recently renewed first), and opens each
+   one's Luna claims page in turn. The first one that shows the account signed in is where offers
+   are listed and claimed. A marketplace without a Luna host (`luna.amazon.co.jp`,
+   `luna.amazon.com.au` and `luna.amazon.sg` do not resolve) is skipped, not treated as an error.
+
+Every cookie is imported as it came; the marketplace reading only decides which hosts to try.
+The marketplace is taken from the cookie's domain (`.amazon.co.uk` is amazon.co.uk), with no
+region table, so it works for any marketplace.
+
+When no page accepts the session, the `reauth_needed` message says which case it is: no Amazon
+sign-in in the session at all, or signed in on amazon.X while `luna.amazon.X` showed the account
+signed out (the sign-in expired or Amazon rejected it). It lists the hosts that were tried, and it
+only ever tells you to sign in on the Luna host of your own marketplace. Every check is also
+logged with marketplace and host names, never a cookie.
+
+Authentication is always decided by a page (`data-a-target="sign-in-button"`), never by the
+cookies alone: a cookie check once reported success on a session that could not claim anything.
+The cookies only choose where to look. A fallback page only counts when it is a Luna page, since
+Amazon's own sign-in form has no sign-in button and would otherwise read as signed in.
+
 ## How claiming works
 
 For each claimable offer the connector opens the offer page, clicks the claim control (located by
@@ -53,7 +79,8 @@ that doesn't complete is reported as `failed`, never as a phantom success.
 - The claim CTA on an offer page is `buy-box_call-to-action`. `FGWPOffer` is deliberately not
   used there: on an offer page those belong to the "more offers" carousel, so matching them
   clicked through to a different game instead of claiming (found on the first live run).
-- End-to-end claiming still needs a session signed in on the served marketplace.
+- End-to-end claiming needs a session signed in on your own marketplace's Luna host; the
+  connector now finds that host by itself instead of relying on `gaming.amazon.com`'s redirect.
 
 ## Terms of service
 
