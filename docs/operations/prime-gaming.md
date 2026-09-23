@@ -11,6 +11,9 @@ and points you at session import instead:
 1. Sign in on **your own marketplace's Luna page** in your normal browser: `luna.amazon.fr` for
    an amazon.fr account, `luna.amazon.co.uk` for amazon.co.uk, and so on. Sign in on
    `luna.amazon.com` only when amazon.com is your marketplace.
+   If your marketplace has no Luna host (amazon.co.jp, amazon.com.au, amazon.sg ...), sign in
+   through `gaming.amazon.com` instead: it routes an account Amazon identifies from its
+   `.amazon.com` cookies to the Luna host that serves it.
 2. Export the cookies with the [session exporter extension](https://github.com/Mouchoir/universal-claimer-extension)
    (pick **Amazon Prime Gaming**).
 3. In Universal Claimer: `/connect/primegaming` → **Session import** → paste → connect.
@@ -40,22 +43,31 @@ still list there (they are public), so nothing looked wrong until the claim fail
 So the sign-in check works in two steps:
 
 1. It opens `gaming.amazon.com/home` and asks the page it lands on, exactly as before. If that
-   page is signed in, offers are listed on that same Luna host.
+   page is signed in, offers are listed on the Luna host it landed on (or through
+   `gaming.amazon.com`, as before, if it has not redirected yet).
 2. If it is signed out, the connector reads which marketplaces the imported cookies hold a live
    auth cookie for (non-empty and not expired, the most recently renewed first), and opens each
    one's Luna claims page in turn. The first one that shows the account signed in is where offers
    are listed and claimed. A marketplace without a Luna host (`luna.amazon.co.jp`,
-   `luna.amazon.com.au` and `luna.amazon.sg` do not resolve) is skipped, not treated as an error.
+   `luna.amazon.com.au` and `luna.amazon.sg` do not resolve) is skipped, not treated as an error,
+   and so is a Luna page that answers with an HTTP error (a 5xx, a geo-block page): neither says
+   anything about the sign-in.
+   One marketplace is left out on purpose: when step 1 was routed to another marketplace's Luna
+   host (`luna.amazon.fr`), amazon.com is not tried on `luna.amazon.com`. Amazon has said where
+   that account lives, so that host's verdict stands and the message tells you to sign in there.
 
 Every cookie is imported as it came; the marketplace reading only decides which hosts to try.
+The exporter's **Amazon Prime Gaming** option includes the cookies of every Amazon marketplace, so
+the session carries whichever one you signed in on.
 The marketplace is taken from the cookie's domain (`.amazon.co.uk` is amazon.co.uk), with no
 region table, so it works for any marketplace.
 
 When no page accepts the session, the `reauth_needed` message says which case it is: no Amazon
 sign-in in the session at all, or signed in on amazon.X while `luna.amazon.X` showed the account
-signed out (the sign-in expired or Amazon rejected it). It lists the hosts that were tried, and it
-only ever tells you to sign in on the Luna host of your own marketplace. Every check is also
-logged with marketplace and host names, never a cookie.
+signed out (the sign-in expired or Amazon rejected it), or none of your marketplaces' Luna pages
+could be loaded. It lists the hosts that were tried, and it only ever tells you to sign in on the
+Luna host of your own marketplace, or through `gaming.amazon.com` when none of them could be
+loaded. Every check is also logged with marketplace and host names, never a cookie.
 
 Authentication is always decided by a page (`data-a-target="sign-in-button"`), never by the
 cookies alone: a cookie check once reported success on a session that could not claim anything.

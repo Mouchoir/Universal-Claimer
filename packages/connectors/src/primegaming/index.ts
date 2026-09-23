@@ -15,8 +15,8 @@ import type {
 } from "../connector.js";
 import {
   PlaywrightPrimeGamingDriver,
-  isLunaHost,
   platformFromOfferUrl,
+  routedLunaHost,
   type AuthReport,
   type PrimeGamingDriverFactory,
   type PrimeGamingPageDriver,
@@ -35,11 +35,16 @@ function listOf(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/** "HTTP 503" when the page answered with an error, as opposed to a host that never answered. */
+function httpError(attempt: SignInAttempt): string | undefined {
+  return attempt.navError && /^HTTP \d+$/.test(attempt.navError) ? attempt.navError : undefined;
+}
+
 /** "gaming.amazon.com (served luna.amazon.com), luna.amazon.co.jp (unreachable)". */
 function describeAttempts(attempts: SignInAttempt[]): string {
   return attempts
     .map((a) => {
-      if (a.navError) return `${a.requested} (unreachable)`;
+      if (a.navError) return `${a.requested} (${httpError(a) ?? "unreachable"})`;
       return a.served && a.served !== a.requested ? `${a.requested} (served ${a.served})` : a.requested;
     })
     .join(", ");
@@ -64,39 +69,46 @@ export function reauthSummary(report: AuthReport): string {
     );
   }
 
+  // gaming.amazon.com reads the .com identity and sends it to the account's own Luna host, which
+  // is why the sign-in check does not try luna.amazon.com after such a redirect. When that host
+  // belongs to a marketplace the session is not signed in on, Amazon has just said where the
+  // account lives, and that is the page to sign in on rather than luna.amazon.com.
+  const routedTo = routedLunaHost(report.attempts[0]);
+  const routedHome =
+    routedTo &&
+    report.marketplaces.includes("amazon.com") &&
+    !report.marketplaces.some((m) => `luna.${m}` === routedTo)
+      ? routedTo
+      : undefined;
+
   const findings: string[] = [];
   const refused: string[] = [];
   for (const marketplace of report.marketplaces) {
     const host = `luna.${marketplace}`;
-    const served = report.attempts.find((a) => a.served === host);
+    // A page that errored says nothing about the sign-in, so it never counts as signed out.
+    const shown = report.attempts.find((a) => a.served === host && !a.navError);
+    const failed = report.attempts.find((a) => (a.served === host || a.requested === host) && a.navError);
     const asked = report.attempts.find((a) => a.requested === host);
-    if (served) {
+    if (shown) {
       findings.push(`${host} showed the account signed out`);
       refused.push(host);
-    } else if (asked?.navError) {
-      findings.push(`${host} could not be reached`);
+    } else if (failed) {
+      const status = httpError(failed);
+      findings.push(status ? `${host} answered ${status}` : `${host} could not be reached`);
     } else if (asked) {
       findings.push(
         `${host} redirected to ${asked.served || "another page"}, which showed the account signed out`,
       );
       refused.push(host);
+    } else if (routedTo && marketplace === "amazon.com") {
+      findings.push(
+        `gaming.amazon.com routed the amazon.com sign-in to ${routedTo}, which showed the account signed out`,
+      );
     } else {
       findings.push(`${host} was not checked`);
       refused.push(host);
     }
   }
-
-  // gaming.amazon.com reads the .com identity and sends it to the account's own Luna host. When
-  // that host belongs to a marketplace the session is not signed in on, Amazon has just said
-  // where the account lives, and that is the page to sign in on rather than luna.amazon.com.
-  const entry = report.attempts[0];
-  const routedHome =
-    report.marketplaces.includes("amazon.com") &&
-    entry &&
-    isLunaHost(entry.served) &&
-    !report.marketplaces.some((m) => `luna.${m}` === entry.served)
-      ? entry.served
-      : undefined;
 
   let advice: string;
   if (routedHome) {
@@ -106,9 +118,13 @@ export function reauthSummary(report: AuthReport): string {
   } else if (refused.length) {
     advice = ` The sign-in there has expired or Amazon rejected it: sign in again on ${listOf(refused)} ${REEXPORT}`;
   } else {
+    // Some marketplaces have no Luna host at all (amazon.co.jp, amazon.com.au, amazon.sg ...), so
+    // saying only that nothing loaded would leave the operator nowhere to go. The entry point is
+    // the one route left: it sends an account Amazon identifies from .com cookies to its Luna host.
     advice =
-      " No Luna page could be reached for the marketplaces this session is signed in on, so it has " +
-      "nowhere to claim from.";
+      " No Luna page could be loaded for the marketplaces this session is signed in on, so there is " +
+      "nowhere to claim from on them. gaming.amazon.com can still route an account Amazon identifies " +
+      `from its .com cookies to the Luna host that serves it: sign in through gaming.amazon.com ${REEXPORT}`;
   }
   return `Signed in on ${listOf(report.marketplaces)}, but ${listOf(findings)}.${advice}${tried}`;
 }

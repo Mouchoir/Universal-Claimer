@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "playwright-core";
+import type { BrowserContext, Page, Response } from "playwright-core";
 import type { BrowserCookie, SessionHandle } from "../connector.js";
 
 /** A Prime Gaming offer that can be claimed (title + absolute offer URL). */
@@ -14,7 +14,10 @@ export interface SignInAttempt {
   /** Host the page ended on after Amazon's redirects; empty when the navigation itself failed. */
   served: string;
   signedIn: boolean;
-  /** Why the navigation failed (the host does not resolve, it timed out), when it did. */
+  /**
+   * Why the page could not be used, when it could not: the navigation failed (the host does not
+   * resolve, it timed out), or the page answered with an HTTP error, written as "HTTP 503".
+   */
   navError?: string;
 }
 
@@ -51,6 +54,7 @@ export type PrimeGamingDriverFactory = (session: SessionHandle) => PrimeGamingPa
 // falls back to the Luna host of each marketplace the session is actually signed in on.
 const HOME_URL = "https://gaming.amazon.com/home";
 const BASE_ORIGIN = "https://gaming.amazon.com";
+const ENTRY_HOST = new URL(HOME_URL).host;
 const CLAIMS_HOME_PATH = "/claims/home";
 
 /**
@@ -137,6 +141,18 @@ function hostOf(url: string): string {
 /** A Luna host of some Amazon marketplace (luna.amazon.fr, luna.amazon.co.uk, ...). */
 export function isLunaHost(host: string): boolean {
   return /^luna\./i.test(host) && amazonMarketplace(host) !== null;
+}
+
+/**
+ * The Luna host gaming.amazon.com routed the session to, when that tells where the account lives.
+ * The entry point only reads the .com identity, so landing on another marketplace's Luna host
+ * means Amazon placed that identity there. luna.amazon.com says nothing either way: it is also
+ * where an identity the entry point cannot see is sent. The sign-in check and the reauth_needed
+ * message both rely on this, so they cannot disagree about where the account belongs.
+ */
+export function routedLunaHost(entry: SignInAttempt | undefined): string | undefined {
+  if (!entry || entry.requested !== ENTRY_HOST || !isLunaHost(entry.served)) return undefined;
+  return entry.served === hostOf(lunaClaimsHome("amazon.com")) ? undefined : entry.served;
 }
 
 /** The first line of a navigation error: Playwright appends a multi-line call log to it. */
@@ -232,6 +248,10 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
    * in on is then tried on its own Luna host, freshest sign-in first. Some marketplaces have no
    * Luna host at all (luna.amazon.co.jp does not resolve), so a failed navigation moves on to the
    * next one instead of ending the run.
+   *
+   * One marketplace is left out on purpose: when the entry point routed the .com identity to
+   * another marketplace's Luna host, that host's verdict stands. luna.amazon.com may well accept
+   * the same cookies, but it is not where this account's offers are claimed.
    */
   async isAuthenticated(): Promise<boolean> {
     const page = await this.page();
@@ -258,7 +278,9 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
       return true;
     }
 
+    const routedTo = routedLunaHost(entry);
     for (const marketplace of this.report.marketplaces) {
+      if (routedTo && marketplace === "amazon.com") continue;
       const url = lunaClaimsHome(marketplace);
       const host = hostOf(url);
       if (attempts.some((a) => a.served === host || a.requested === host)) continue;
@@ -275,10 +297,16 @@ export class PlaywrightPrimeGamingDriver implements PrimeGamingPageDriver {
   /** One fallback probe: open a marketplace's Luna claims page and read what it shows. */
   private async tryLunaHost(page: Page, url: string): Promise<SignInAttempt> {
     const requested = hostOf(url);
+    let res: Response | null;
     try {
-      await page.goto(url, { waitUntil: "domcontentloaded" });
+      res = await page.goto(url, { waitUntil: "domcontentloaded" });
     } catch (err) {
       return { requested, served: "", signedIn: false, navError: navErrorOf(err) };
+    }
+    // goto resolves on an HTTP error too, and an error or geo-block page has no sign-in button
+    // either: without this, a Luna host that is down would read as signed in.
+    if (res && !res.ok()) {
+      return { requested, served: hostOf(page.url()), signedIn: false, navError: `HTTP ${res.status()}` };
     }
     await page.waitForTimeout(4000).catch(() => undefined);
     const served = hostOf(page.url());

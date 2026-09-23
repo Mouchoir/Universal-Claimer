@@ -221,6 +221,9 @@ const FUTURE = 4_102_444_800; // 2100-01-01
 const PAST = 946_684_800; // 2000-01-01
 const NOW_MS = Date.UTC(2026, 0, 1);
 
+/** Advice to sign in on luna.amazon.com, which an account from another marketplace must never get. */
+const SIGN_IN_ON_COM = /sign in (again )?on luna\.amazon\.com/i;
+
 function cookie(name: string, domain: string, expires?: number, value = "opaque-value"): BrowserCookie {
   return { name, value, domain, path: "/", ...(expires !== undefined ? { expires } : {}) };
 }
@@ -287,14 +290,25 @@ describe("signedInMarketplaces", () => {
 /**
  * A minimal stand-in for the Playwright page, so the real driver's sign-in resolver runs as
  * written. `routes` maps each host the driver may request to the host Amazon serves for it (a
- * missing host does not resolve); `signedInOn` lists the hosts that show the account signed in.
+ * missing host does not resolve); `signedInOn` lists the hosts that show the account signed in;
+ * `status` gives a served host an HTTP status other than 200. Like Amazon's, an error page has
+ * no sign-in button, which is exactly what makes it look signed in to a careless check.
  */
-function fakeAmazon(opts: { routes: Record<string, string>; signedInOn?: string[]; start?: string }) {
+function fakeAmazon(opts: {
+  routes: Record<string, string>;
+  signedInOn?: string[];
+  status?: Record<string, number>;
+  start?: string;
+}) {
   const visits: string[] = [];
   const added: BrowserCookie[] = [];
   let current = opts.start ?? "about:blank";
   const signedInOn = new Set(opts.signedInOn ?? []);
-  const isSignedIn = () => signedInOn.has(new URL(current).host);
+  const statusOf = (host: string) => opts.status?.[host] ?? 200;
+  const showsSignInButton = () => {
+    const host = new URL(current).host;
+    return statusOf(host) < 400 && !signedInOn.has(host);
+  };
   const page = {
     url: () => current,
     goto: async (url: string) => {
@@ -305,14 +319,15 @@ function fakeAmazon(opts: { routes: Record<string, string>; signedInOn?: string[
         throw new Error(`page.goto: net::ERR_NAME_NOT_RESOLVED at ${url}\nCall log:\n  - navigating to "${url}"`);
       }
       current = new URL(target.pathname, `https://${served}`).href;
-      return null;
+      const status = statusOf(served);
+      return { status: () => status, ok: () => status >= 200 && status < 300 };
     },
     reload: async () => null,
     waitForTimeout: async () => {},
     waitForSelector: async () => null,
     evaluate: async () => [],
     locator: (selector: string) => {
-      const count = async () => (selector.includes("sign-in-button") && !isSignedIn() ? 1 : 0);
+      const count = async () => (selector.includes("sign-in-button") && showsSignInButton() ? 1 : 0);
       return { count, first: () => ({ count, textContent: async () => null }) };
     },
   };
@@ -384,6 +399,59 @@ describe("PlaywrightPrimeGamingDriver sign-in resolution", () => {
     expect(jp?.navError).toContain("ERR_NAME_NOT_RESOLVED");
     expect(jp?.navError).not.toContain("Call log");
     expect(fr).toEqual({ requested: "luna.amazon.fr", served: "luna.amazon.fr", signedIn: true });
+  });
+
+  it("does not read a Luna host answering with an HTTP error as signed in", async () => {
+    // A 5xx or a geo-block page has no sign-in button either, and goto does not throw on it.
+    const amazon = fakeAmazon({
+      routes: {
+        "gaming.amazon.com": "luna.amazon.com",
+        "luna.amazon.fr": "luna.amazon.fr",
+        "luna.amazon.de": "luna.amazon.de",
+      },
+      signedInOn: ["luna.amazon.de"],
+      status: { "luna.amazon.fr": 503 },
+    });
+    const driver = new PlaywrightPrimeGamingDriver(amazon.session);
+    await driver.applyCookies([cookie("at-acbfr", ".amazon.fr", FUTURE), cookie("at-acbde", ".amazon.de", FUTURE - 10)]);
+
+    expect(await driver.isAuthenticated()).toBe(true);
+    expect((await driver.authReport()).attempts).toEqual([
+      { requested: "gaming.amazon.com", served: "luna.amazon.com", signedIn: false },
+      { requested: "luna.amazon.fr", served: "luna.amazon.fr", signedIn: false, navError: "HTTP 503" },
+      { requested: "luna.amazon.de", served: "luna.amazon.de", signedIn: true },
+    ]);
+    await driver.listClaimableGames();
+    expect(amazon.visits.at(-1)).toBe("https://luna.amazon.de/claims/home");
+  });
+
+  it("lets the routed host's verdict stand instead of trying luna.amazon.com", async () => {
+    // Amazon routed the .com identity to luna.amazon.fr, signed out there. luna.amazon.com would
+    // accept the same cookies, but it is not where this account's offers are claimed.
+    const amazon = fakeAmazon({
+      routes: {
+        "gaming.amazon.com": "luna.amazon.fr",
+        "luna.amazon.com": "luna.amazon.com",
+        "luna.amazon.de": "luna.amazon.de",
+      },
+      signedInOn: ["luna.amazon.com"],
+    });
+    const driver = new PlaywrightPrimeGamingDriver(amazon.session);
+    await driver.applyCookies([cookie("at-main", ".amazon.com", FUTURE), cookie("at-acbde", ".amazon.de", FUTURE - 10)]);
+
+    expect(await driver.isAuthenticated()).toBe(false);
+    // Other marketplaces are still tried; only the .com fallback is left out.
+    expect(amazon.visits).toEqual(["https://gaming.amazon.com/home", "https://luna.amazon.de/claims/home"]);
+    const report = await driver.authReport();
+    expect(report.attempts).toEqual([
+      { requested: "gaming.amazon.com", served: "luna.amazon.fr", signedIn: false },
+      { requested: "luna.amazon.de", served: "luna.amazon.de", signedIn: false },
+    ]);
+    // The message agrees with the check: sign in where Amazon routed the account.
+    const summary = reauthSummary(report);
+    expect(summary).toContain("routed the amazon.com sign-in to luna.amazon.fr");
+    expect(summary).toContain("Amazon routes this account to luna.amazon.fr");
+    expect(summary).not.toMatch(SIGN_IN_ON_COM);
   });
 
   it("does not ask again for a host that was already served", async () => {
@@ -459,8 +527,6 @@ async function reauth(report: AuthReport): Promise<string> {
 }
 
 const entryToCom = { requested: "gaming.amazon.com", served: "luna.amazon.com", signedIn: false };
-/** Advice to sign in on luna.amazon.com, which an account from another marketplace must never get. */
-const SIGN_IN_ON_COM = /sign in (again )?on luna\.amazon\.com/i;
 
 describe("PrimeGamingConnector reauth_needed summary", () => {
   it("says so when the session holds no Amazon sign-in at all", async () => {
@@ -507,8 +573,24 @@ describe("PrimeGamingConnector reauth_needed summary", () => {
     });
     expect(summary).toContain("luna.amazon.co.jp could not be reached");
     expect(summary).toContain("nowhere to claim from");
+    // Not a dead end: gaming.amazon.com still routes an account it can identify from .com cookies.
+    expect(summary).toContain("sign in through gaming.amazon.com in your browser");
     expect(summary).toContain("luna.amazon.co.jp (unreachable)");
     expect(summary).not.toMatch(SIGN_IN_ON_COM);
+  });
+
+  it("reports a Luna host answering with an HTTP error as such, not as signed out", async () => {
+    const summary = await reauth({
+      marketplaces: ["amazon.fr"],
+      attempts: [
+        entryToCom,
+        { requested: "luna.amazon.fr", served: "luna.amazon.fr", signedIn: false, navError: "HTTP 503" },
+      ],
+    });
+    expect(summary).toContain("luna.amazon.fr answered HTTP 503");
+    expect(summary).not.toContain("showed the account signed out");
+    expect(summary).toContain("sign in through gaming.amazon.com");
+    expect(summary).toContain("Tried: gaming.amazon.com (served luna.amazon.com), luna.amazon.fr (HTTP 503).");
   });
 
   it("asks for a .com sign-in only when .com is the account's marketplace", async () => {
@@ -527,6 +609,16 @@ describe("PrimeGamingConnector reauth_needed summary", () => {
     expect(routed).toContain("Amazon routes this account to luna.amazon.fr");
     expect(routed).toContain("sign in on luna.amazon.fr");
     expect(routed).not.toMatch(SIGN_IN_ON_COM);
+
+    // Signed in on amazon.fr as well: the check no longer tries luna.amazon.com after that
+    // redirect, and the message must not ask for a .com sign-in it never looked for.
+    const both = await reauth({
+      marketplaces: ["amazon.com", "amazon.fr"],
+      attempts: [{ requested: "gaming.amazon.com", served: "luna.amazon.fr", signedIn: false }],
+    });
+    expect(both).not.toContain("luna.amazon.com was not checked");
+    expect(both).toContain("sign in again on luna.amazon.fr in your browser");
+    expect(both).not.toMatch(SIGN_IN_ON_COM);
   });
 
   it("is also the reason a session import is refused", async () => {
