@@ -384,8 +384,8 @@ export function ExtensionSetup({ serviceId, config, onConnected, pollMs = POLL_M
                 {needsAccess.domains.length > 0 && <> for {needsAccess.domains.join(", ")}</>}. A
                 page is not allowed to ask on its behalf, so this one step happens in the
                 extension: click its icon in the toolbar, press{" "}
-                <strong>Send to this instance</strong> and accept the prompt. Stay on this page —
-                it carries on by itself afterwards.
+                <strong>Allow access (one time)</strong> and allow it in the tab that opens. You
+                are brought back here; press the button above again.
               </div>
             </div>
           )}
@@ -409,7 +409,9 @@ export function ExtensionSetup({ serviceId, config, onConnected, pollMs = POLL_M
               toolbar.
             </li>
             <li>
-              Click <strong>Send to this instance</strong>.
+              Click <strong>Send to this instance</strong>. If it offers{" "}
+              <strong>Allow access (one time)</strong>, press that too: from then on, the button on
+              this page does everything by itself.
             </li>
           </ol>
           <p role="status" style={{ margin: 0, fontSize: 13, color: "var(--uc-text-muted)" }}>
