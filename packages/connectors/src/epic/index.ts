@@ -13,11 +13,77 @@ import type {
   InteractiveLogin,
   SessionHandle,
 } from "../connector.js";
-import { PlaywrightEpicDriver, type EpicDriverFactory } from "./driver.js";
+import {
+  PlaywrightEpicDriver,
+  type EpicDriverFactory,
+  type EpicPageDriver,
+  type EpicSignInCheck,
+} from "./driver.js";
 
 // Epic's store captcha site key (recaptcha). Placeholder — validate against the live page.
 const EPIC_RECAPTCHA_KEY = "6Lc5-key-placeholder";
 const EPIC_STORE_URL = "https://store.epicgames.com";
+
+/**
+ * Epic's auth cookies, named in a signed-out summary so it says which part of the session is
+ * gone: the short-lived tokens (EPIC_BEARER_TOKEN, EPIC_SSO) or the longer-lived cookies that
+ * let the login page renew them. Diagnostics only - nothing is decided on them, because Epic
+ * renames and reshuffles these without notice and the account page is the only real verdict.
+ */
+const EPIC_AUTH_COOKIES = [
+  "EPIC_SSO",
+  "EPIC_BEARER_TOKEN",
+  "EPIC_SESSION_AP",
+  "EPIC_SSO_RM",
+  "EPIC_DEVICE",
+] as const;
+
+type CookieExpiry = "valid" | "session" | "expired";
+
+/** Playwright reports a session cookie's expiry as -1 (and a hand-made cookie may have none). */
+function cookieExpiry(cookie: BrowserCookie, now: number): CookieExpiry {
+  if (cookie.expires === undefined || cookie.expires === -1) return "session";
+  return cookie.expires * 1000 > now ? "valid" : "expired";
+}
+
+const EXPIRY_RANK: Record<CookieExpiry, number> = { valid: 2, session: 1, expired: 0 };
+
+/**
+ * Which of Epic's auth cookies the browser holds, and whether each is still good - names and
+ * states only. A value never enters this string: it ends up in the run history and in the
+ * outbound notification.
+ */
+export function describeAuthCookies(cookies: BrowserCookie[], now: number): string {
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const name of EPIC_AUTH_COOKIES) {
+    // The same name can be set on several Epic hosts; the best of them is what the site sees.
+    const states = cookies.filter((c) => c.name === name).map((c) => cookieExpiry(c, now));
+    if (states.length === 0) missing.push(name);
+    else {
+      const best = states.reduce((a, b) => (EXPIRY_RANK[b] > EXPIRY_RANK[a] ? b : a));
+      present.push(`${name} (${best})`);
+    }
+  }
+  return `Auth cookies present: ${present.join(", ") || "none"}; missing: ${missing.join(", ") || "none"}.`;
+}
+
+/** The summary for a check that ended on a Cloudflare challenge. */
+function blockedSummary(check: EpicSignInCheck): string {
+  return `Blocked by a Cloudflare challenge at ${check.path}.`;
+}
+
+/**
+ * Where a signed-out check stopped, and what the browser still held. "Session expired" on its
+ * own left the operator reconnecting blind; the path and the cookie states say whether the login
+ * page was reached at all and which cookies Epic had already dropped.
+ */
+async function signedOutDetail(driver: EpicPageDriver, check: EpicSignInCheck): Promise<string> {
+  const where = `it stopped at ${check.path} after giving Epic's login page time to renew it.`;
+  // Names are read from the cookies here and nowhere else; the values are never kept.
+  const cookies = await driver.getCookies().catch(() => undefined);
+  return cookies ? `${where} ${describeAuthCookies(cookies, Date.now())}` : where;
+}
 
 /**
  * Epic Games connector (reference implementation). Orchestration logic here is unit-tested
@@ -42,11 +108,15 @@ export class EpicConnector implements Connector, InteractiveLogin {
       const driver = this.createDriver(session);
       if (input.method === "session_import") {
         await driver.applyCookies(input.cookies);
-        const ok = await driver.isAuthenticated();
+        const check = await driver.checkSignIn();
+        if (check.state === "signed_in") return { ok: true, fingerprint };
         return {
-          ok,
+          ok: false,
           fingerprint,
-          reason: ok ? undefined : "session is not authenticated (expired or invalid cookies)",
+          reason:
+            check.state === "blocked"
+              ? blockedSummary(check)
+              : `session is not authenticated (expired or invalid cookies): ${await signedOutDetail(driver, check)}`,
         };
       }
       const totp = input.totpSeed ? ctx.totp(input.totpSeed) : undefined;
@@ -86,12 +156,27 @@ export class EpicConnector implements Connector, InteractiveLogin {
         await driver.loginWithPassword(input.email, input.password, totp);
       }
 
-      if (!(await driver.isAuthenticated())) {
+      const check = await driver.checkSignIn();
+      // Neutral keys only: the logger hides anything that looks like a session or a cookie.
+      ctx.log.info("epic sign-in check", {
+        state: check.state,
+        path: check.path,
+        status: check.status,
+        bounced: check.bounced,
+      });
+      if (check.state === "blocked") {
+        // Not reauth_needed: a challenge says nothing about the session, and reconnecting would
+        // only swap a good session for the same one.
+        return { outcome: "failed", summary: blockedSummary(check) };
+      }
+      if (check.state === "signed_out") {
         return {
           outcome: "reauth_needed",
-          summary: "Epic session is no longer authenticated; reconnect the account.",
+          summary: `Epic session is no longer authenticated: ${await signedOutDetail(driver, check)} Reconnect the account.`,
         };
       }
+      // Signed in, including through a bounce: the login page just renewed the short-lived
+      // tokens, which makes this exactly the run whose cookies must be persisted below.
       authenticated = true;
 
       // Read the account name as soon as we know the session is good, so the dashboard learns it
@@ -164,8 +249,9 @@ export class EpicConnector implements Connector, InteractiveLogin {
         accountFacts,
       };
     } finally {
-      // Epic renewed its short-lived auth tokens during this run; hand them back so the stored
-      // session stays alive instead of expiring in ~2 days (see ConnectorContext).
+      // Epic renewed its short-lived auth tokens during this run (they last hours, and the login
+      // page's bounce is one of the places it renews them); hand them back so the stored copy
+      // stays current instead of lapsing between runs (see ConnectorContext).
       if (authenticated && input.method === "session_import" && ctx.persistRefreshedSession) {
         await ctx
           .persistRefreshedSession(await driver.getCookies())
@@ -183,7 +269,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
   // --- InteractiveLogin (assisted login) ---
 
   async isLoggedIn(session: SessionHandle, _ctx: ConnectorContext): Promise<boolean> {
-    return this.createDriver(session).isAuthenticated();
+    return (await this.createDriver(session).checkSignIn()).state === "signed_in";
   }
 
   async extractCookies(session: SessionHandle): Promise<BrowserCookie[]> {
@@ -192,4 +278,4 @@ export class EpicConnector implements Connector, InteractiveLogin {
 }
 
 export { PlaywrightEpicDriver } from "./driver.js";
-export type { EpicPageDriver, EpicDriverFactory } from "./driver.js";
+export type { EpicPageDriver, EpicDriverFactory, EpicSignInCheck, EpicSignInState } from "./driver.js";

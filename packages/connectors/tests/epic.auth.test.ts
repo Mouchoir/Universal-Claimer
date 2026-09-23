@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { NullCaptchaSolver, createLogger } from "@uc/core";
 import { EpicConnector } from "../src/epic/index.js";
-import type { EpicPageDriver } from "../src/epic/driver.js";
+import type { EpicPageDriver, EpicSignInCheck } from "../src/epic/driver.js";
 import type { BrowserFactory, ConnectorContext, SessionHandle } from "../src/connector.js";
+
+const SIGNED_IN: EpicSignInCheck = { state: "signed_in", path: "/account/personal", status: 200, bounced: false };
+const SIGNED_OUT: EpicSignInCheck = { state: "signed_out", path: "/id/login", status: 200, bounced: false };
 
 /** A session handle whose context is never touched by the fake driver. */
 const fakeSession = { context: {} } as unknown as SessionHandle;
@@ -27,7 +30,7 @@ function makeCtx(overrides: Partial<ConnectorContext> = {}): ConnectorContext {
 function fakeDriver(overrides: Partial<EpicPageDriver>): EpicPageDriver {
   return {
     applyCookies: async () => {},
-    isAuthenticated: async () => true,
+    checkSignIn: async () => SIGNED_IN,
     loginWithPassword: async () => ({ authenticated: true }),
     listClaimableGames: async () => [],
     claimGame: async () => ({ claimed: true }),
@@ -41,7 +44,7 @@ function fakeDriver(overrides: Partial<EpicPageDriver>): EpicPageDriver {
 describe("EpicConnector.authenticate", () => {
   it("session import with a valid session → ok", async () => {
     const connector = new EpicConnector({
-      createDriver: () => fakeDriver({ isAuthenticated: async () => true }),
+      createDriver: () => fakeDriver({ checkSignIn: async () => SIGNED_IN }),
     });
     const res = await connector.authenticate(
       { method: "session_import", cookies: [] },
@@ -53,7 +56,7 @@ describe("EpicConnector.authenticate", () => {
 
   it("session import with an expired session → not ok, with a reason", async () => {
     const connector = new EpicConnector({
-      createDriver: () => fakeDriver({ isAuthenticated: async () => false }),
+      createDriver: () => fakeDriver({ checkSignIn: async () => SIGNED_OUT }),
     });
     const res = await connector.authenticate(
       { method: "session_import", cookies: [] },
