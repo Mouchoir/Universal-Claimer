@@ -60,7 +60,7 @@ jobs:
             echo "PATCHNOTE_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.app
