@@ -451,10 +451,13 @@ export async function walkCheckout(
   let stop: string | undefined;
   let seenConfirm: CheckoutButton | undefined;
   let confirmRefused = false;
-  // Confirmation copy already in the window when it opened, next to a confirm button, is part of
-  // the window (a launcher hint, say) and not the order's outcome: it only counts once it has
-  // gone and come back.
-  let copyAtOpen = false;
+  // Confirmation copy the window showed before the confirm click, next to a confirm button, is part
+  // of the window (a launcher hint, say) and not the order's outcome: it only counts once it has
+  // gone and come back. Sampled on every look before the click, not just the first — a window
+  // caught while still rendering its empty shell shows that copy one look later, and treating it
+  // as the answer sent the first verification reload half a second after the click, killing the
+  // order it was meant to confirm.
+  let copyBeforeClick = false;
   const errors = new Set<string>();
 
   for (;;) {
@@ -471,7 +474,6 @@ export async function walkCheckout(
 
     if (!opened && (checkout.length > 0 || confirms.length > 0)) {
       opened = true;
-      copyAtOpen = checkout.some((v) => v.confirmed) && confirms.length > 0;
       trail.push(
         checkout.length > 0 ? "purchase window opened" : "checkout opened in a dialog on the page",
       );
@@ -513,13 +515,14 @@ export async function walkCheckout(
     }
 
     const windowCopy = checkout.some((v) => v.confirmed);
-    if (copyAtOpen && checkout.length > 0 && !windowCopy) copyAtOpen = false;
+    if (phase !== "waiting" && windowCopy && confirms.length > 0) copyBeforeClick = true;
+    if (copyBeforeClick && checkout.length > 0 && !windowCopy) copyBeforeClick = false;
     // The copy is what Epic says once an order went through, so it only counts once the confirm
     // button was clicked or none is showing any more; before that, next to a confirm button still
     // waiting for its click, it can only be something else the window or the page says.
     const settled = phase === "waiting" || confirms.length === 0;
     const pageCopy = page?.confirmed === true && !confirmedBefore;
-    if (settled && ((windowCopy && !copyAtOpen) || pageCopy)) {
+    if (settled && ((windowCopy && !copyBeforeClick) || pageCopy)) {
       trail.push("Epic confirmed the order");
       positive = true;
       break;

@@ -361,6 +361,31 @@ describe("walkCheckout", () => {
     expect(seen.reloads).toBe(1);
   });
 
+  it("copy that appears before the click only after the window's empty shell is still not the outcome", async () => {
+    // The first look can catch the window before it renders. Sampling the copy only then let a
+    // launcher hint that rendered one look later pass for Epic's answer the moment the confirm
+    // button was clicked, and the verification reload half a second later killed the order.
+    const { probe, seen } = scripted({
+      views: (s) => {
+        if (s.clickedCta === undefined) return [view("page")];
+        const shell = s.t - s.clickedCta < 1_000;
+        return [
+          view("page"),
+          view("checkout", {
+            buttons: shell ? [] : [button("Add to library")],
+            confirmed: !shell,
+          }),
+        ];
+      },
+      owned: (s) => pressedAt(s, /add to library/i) !== undefined,
+    });
+    const res = await walkCheckout(probe, { ...CHECKOUT_TIMING, outcomeMs: 2_000 });
+    expect(res).toEqual({ claimed: true });
+    // Not taken for the answer: the wait ran its course and the one reload decided.
+    expect(seen.t - pressedAt(seen, /add to library/i)!).toBeGreaterThanOrEqual(2_000);
+    expect(seen.reloads).toBe(1);
+  });
+
   it("copy that was in the window at open counts once it has gone and come back after the click", async () => {
     const { probe, seen } = scripted({
       views: (s) => {
