@@ -5,9 +5,11 @@
  * whose body is the patch note, but only after the image has been pushed — so a release existing
  * always means an image exists to install.
  *
- * The releases list is the ordering, not the version strings. Tags are date-and-sha, which sort
- * correctly by luck rather than by design, and nothing here should depend on that: GitHub returns
- * releases newest-first, so position in that list is the authority.
+ * The ordering comes from when each release was published, never from the version strings or
+ * from the order GitHub lists them in. This file used to trust that list to be newest-first, and
+ * it is not: releases published the same day come back sorted by tag name, so `…-e98e716` was
+ * listed above the later `…-224e728` — and an instance on the newest version was told it was two
+ * behind, with an "Update now" that could never do anything.
  */
 
 /** One published release, reduced to what the app shows. */
@@ -37,7 +39,7 @@ export function isReleaseVersion(version: string): boolean {
 /**
  * Split the release history around the running version and the last one the operator saw.
  *
- * `releases` must be newest-first, as the GitHub API returns them.
+ * `releases` must be newest-first by publication, as {@link parseReleases} returns them.
  */
 export function computeUpdateState(
   running: string,
@@ -91,5 +93,14 @@ export function parseReleases(payload: unknown): Release[] {
       publishedAt: typeof item.published_at === "string" ? item.published_at : "",
     });
   }
-  return out;
+  // Newest first by publication time. A release with no readable time sinks to the bottom rather
+  // than being guessed into place; ties keep GitHub's order, which is all there is to go on.
+  const at = (r: Release) => {
+    const t = Date.parse(r.publishedAt);
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  };
+  return out
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => at(b.r) - at(a.r) || a.i - b.i)
+    .map(({ r }) => r);
 }
