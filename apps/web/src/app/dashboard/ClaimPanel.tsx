@@ -117,9 +117,16 @@ export function ClaimPanel() {
                   </div>
                 </div>
                 {a.status === "needs_reauth" ? (
-                  <a href={`/connect/${a.serviceId}`}>
-                    <button>Reconnect</button>
-                  </a>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {/* Still offered: the verdict comes from the last run and can be wrong — and a
+                        run that works clears it. Hiding this left no way to find out. */}
+                    <button className="uc-quiet" onClick={() => runClaim(a.id)}>
+                      Try again
+                    </button>
+                    <a href={`/connect/${a.serviceId}`}>
+                      <button>Reconnect</button>
+                    </a>
+                  </div>
                 ) : (
                   <button onClick={() => runClaim(a.id)}>Run claim</button>
                 )}
@@ -128,11 +135,11 @@ export function ClaimPanel() {
               {/* Explain the dead session and what to do, instead of just a status word. */}
               {a.status === "needs_reauth" && (
                 <p className="uc-warning" style={{ fontSize: 13, marginTop: 8 }}>
-                  This session expired, so claims can&apos;t run. Services keep browser sessions
-                  alive only for a while (Epic&apos;s short-lived tokens last hours, about 8 h, and
-                  the session outlives them only as long as its longer-lived cookies do), so it
-                  needs reconnecting. Use <strong>Reconnect</strong> — the fastest way is the
-                  session exporter extension.
+                  The last run found this session signed out. Services keep a browser session
+                  alive only for a while, so it usually needs a fresh one: use{" "}
+                  <strong>Reconnect</strong> — the fastest way is the session exporter extension.
+                  If you think the verdict was wrong, <strong>Try again</strong> runs with the
+                  stored session; a run that works clears this.
                 </p>
               )}
 

@@ -50,6 +50,12 @@ export interface ClaimJobDeps {
   /** Pause a job awaiting human action (non-terminal). */
   pauseForHumanAction(jobId: string, summary: string): Promise<void>;
   markNeedsReauth(connectedAccountId: string): Promise<void>;
+  /**
+   * Clear a needs-reauth flag once a run proves the session works. Without it the flag was
+   * permanent: a verdict that turned out wrong — a connector bug, a transient page — left the
+   * account marked dead until it was reconnected, however many runs then succeeded.
+   */
+  markConnected(connectedAccountId: string): Promise<void>;
   recordRun(serviceId: string, version: string, success: boolean, outcome: ClaimOutcome): Promise<void>;
   /**
    * Persist what the run obtained (one claim_event per item) and any account facts it observed
@@ -164,6 +170,7 @@ export async function runClaim(deps: ClaimJobDeps, job: ClaimJob): Promise<void>
   await deps.finish(job.jobId, result.outcome, result.summary);
 
   const success = result.outcome === "claimed" || result.outcome === "nothing_to_claim";
+  if (success) await deps.markConnected(job.connectedAccountId);
   await deps.recordRun(account.serviceId, connector.version, success, result.outcome);
 
   if (result.outcome === "failed" || result.outcome === "reauth_needed") {

@@ -135,6 +135,7 @@ export async function main(): Promise<void> {
       await notifyJobEvent(pool);
     },
     markNeedsReauth: async (accountId) => updateAccountStatus(db, accountId, "needs_reauth"),
+    markConnected: async (accountId) => updateAccountStatus(db, accountId, "connected"),
     recordRun: async (serviceId, version, success, outcome) => {
       await recordConnectorRun(db, { serviceId, connectorVersion: version, success, outcome });
       await evaluateConnectorHealth(db, serviceId);
