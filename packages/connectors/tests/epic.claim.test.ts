@@ -113,6 +113,46 @@ describe("EpicConnector.claim", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("puts the checkout's trail in the summary and in the log, under keys the logger leaves alone", async () => {
+    const trail = "clicked 'Get'; purchase window opened; no 'Add to library' or 'Place Order' button (buttons seen: Close)";
+    const lines: string[] = [];
+    const connector = new EpicConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [
+            { title: "Game X", url: "https://store.epicgames.com/p/x" },
+            { title: "Game Y", url: "https://store.epicgames.com/p/y" },
+          ],
+          claimGame: async (game) =>
+            game.title === "Game X"
+              ? { claimed: false, reason: trail }
+              : { claimed: false, captcha: true, reason: "a captcha challenge is showing in the purchase window" },
+        }),
+    });
+    const { ctx } = makeCtx({ log: createLogger({ sink: (l) => lines.push(l) }) });
+    const res = await connector.claim(sessionInput, fp, {}, ctx);
+    // Game Y's captcha hands the run over to a person; Game X's trail still went to the log first.
+    expect(res.outcome).toBe("requires_human_action");
+    const logged = lines.filter((l) => l.includes("epic checkout"));
+    expect(logged).toHaveLength(2);
+    expect(logged[0]).toContain("buttons seen: Close");
+    expect(logged[1]).toContain("in the purchase window");
+    expect(lines.join("\n")).not.toContain("[REDACTED]");
+  });
+
+  it("a failed checkout's trail is what the summary says about the game", async () => {
+    const trail = "clicked 'Get'; purchase window opened; clicked 'Add to library'; no confirmation within 30 s";
+    const connector = new EpicConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [{ title: "Game X", url: "https://store.epicgames.com/p/x" }],
+          claimGame: async () => ({ claimed: false, reason: trail }),
+        }),
+    });
+    const res = await connector.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res.summary).toBe(`Found free game(s) but could not complete checkout for: Game X (${trail}).`);
+  });
+
   it("a missing purchase button is a failure with its reason, not a game already owned", async () => {
     const connector = new EpicConnector({
       createDriver: () =>

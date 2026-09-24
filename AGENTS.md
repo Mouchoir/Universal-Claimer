@@ -184,7 +184,11 @@ keystrokes are now event-driven and **never persisted** (stronger Principle II).
 `LOGIN_RELAY_EMBED` (web + worker). **Live-validated locally:** bridge auth/forwarding (6/6) and
 a real Epic login page streamed 73 JPEG frames end-to-end (worker CDP → web bridge → client).
 Cosmetic TODO: the login page title is a hardcoded placeholder ("the service"). Epic checkout
-(Get→Place Order across the purchase iframe) remains best-effort, needs live tuning.
+(Get → Add to library across the purchase iframe) is walked step by step with bounded waits, looks
+for a captcha inside the purchase window too, and returns the steps it reached as the failure
+reason (`walkCheckout` in `packages/connectors/src/epic/driver.ts`, docs/operations/epic-games.md).
+Its reference is `vogler/free-games-claimer` on the `dev` branch; selectors still need live
+validation.
 
 Note: spec-kit commands in this repo are GitHub Copilot prompts under `.github/prompts/`;
 the PowerShell scripts under `.specify/scripts/powershell/` do the file scaffolding.

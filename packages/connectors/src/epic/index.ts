@@ -13,11 +13,13 @@ import type {
   InteractiveLogin,
   SessionHandle,
 } from "../connector.js";
+import type { EpicClaimAttempt } from "./checkout.js";
 import {
   PlaywrightEpicDriver,
   type EpicDriverFactory,
   type EpicPageDriver,
   type EpicSignInCheck,
+  type FreeGame,
 } from "./driver.js";
 
 // Epic's store captcha site key (recaptcha). Placeholder — validate against the live page.
@@ -223,15 +225,30 @@ export class EpicConnector implements Connector, InteractiveLogin {
 
       const claimed: string[] = [];
       const failed: string[] = [];
+      // Each attempt's own trail goes to the worker log too. The run summary only carries it for a
+      // failure; a captcha hand-back's summary does not, and that is where it says whether the
+      // challenge came up in the purchase window or on the page.
+      const note = (game: FreeGame, res: EpicClaimAttempt) =>
+        ctx.log.info("epic checkout", {
+          game: game.title,
+          claimed: res.claimed,
+          captcha: res.captcha === true,
+          owned: res.alreadyOwned === true,
+          ...(res.reason ? { reason: res.reason } : {}),
+        });
       for (const game of games) {
         let res = await driver.claimGame(game);
+        note(game, res);
         if (res.captcha) {
           const token = await ctx.captcha.solve({
             type: "recaptcha_v2",
             websiteURL: EPIC_STORE_URL,
             websiteKey: EPIC_RECAPTCHA_KEY,
           });
-          if (token) res = await driver.claimGame(game, token);
+          if (token) {
+            res = await driver.claimGame(game, token);
+            note(game, res);
+          }
           if (res.captcha) {
             ctx.emit({
               type: "requires_human_action",
@@ -307,6 +324,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
 }
 
 export { PlaywrightEpicDriver } from "./driver.js";
+export type { EpicClaimAttempt } from "./checkout.js";
 export type {
   EpicPageDriver,
   EpicDriverFactory,
