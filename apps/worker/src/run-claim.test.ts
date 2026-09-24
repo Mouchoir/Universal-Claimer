@@ -37,6 +37,7 @@ function makeDeps(overrides: {
     finish: [],
     pauseForHumanAction: [],
     markNeedsReauth: [],
+    markConnected: [],
     recordRun: [],
     recordInsights: [],
     persistRefreshedSession: [],
@@ -59,6 +60,7 @@ function makeDeps(overrides: {
     finish: async (id, outcome, summary) => void calls.finish!.push([id, outcome, summary]),
     pauseForHumanAction: async (id, summary) => void calls.pauseForHumanAction!.push([id, summary]),
     markNeedsReauth: async (id) => void calls.markNeedsReauth!.push(id),
+    markConnected: async (id) => void calls.markConnected!.push(id),
     recordRun: async (s, v, ok, o) => void calls.recordRun!.push([s, v, ok, o]),
     recordInsights: async (input) => void calls.recordInsights!.push(input),
     persistRefreshedSession: async (id, cookies) => void calls.persistRefreshedSession!.push([id, cookies]),
@@ -100,6 +102,24 @@ describe("runClaim orchestration", () => {
     await runClaim(deps, job);
     expect(calls.markNeedsReauth).toEqual(["a1"]);
     expect(calls.recordRun).toEqual([["epic", "0.1.0", false, "reauth_needed"]]);
+  });
+
+  it("clears a re-auth flag once a run succeeds with the stored session", async () => {
+    // A needs-reauth verdict can be wrong — this one came from a connector bug. The next run that
+    // works is the proof, and without this the account stayed marked dead regardless.
+    for (const outcome of ["claimed", "nothing_to_claim"] as const) {
+      const { deps, calls } = makeDeps({ connector: { claim: async () => ({ outcome, summary: "" }) } });
+      await runClaim(deps, job);
+      expect(calls.markConnected).toEqual(["a1"]);
+    }
+  });
+
+  it("does not clear it on a failure or another re-auth verdict", async () => {
+    for (const outcome of ["failed", "reauth_needed"] as const) {
+      const { deps, calls } = makeDeps({ connector: { claim: async () => ({ outcome, summary: "" }) } });
+      await runClaim(deps, job);
+      expect(calls.markConnected).toEqual([]);
+    }
   });
 
   it("still finishes the job (failed) when the connector throws", async () => {
