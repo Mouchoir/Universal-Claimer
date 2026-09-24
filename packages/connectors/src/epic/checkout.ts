@@ -38,6 +38,14 @@ export interface CheckoutTiming {
  * 60 s at each step, P-Adamiec/Free-Games-Claimer-Remaster re-reads ownership three times over
  * about 30 s because the library lags the order. The fixed 5 s this replaces read a slow
  * confirmation as a failure.
+ *
+ * They are not the whole of it, and a run's length should be planned on the sum. With every wait
+ * running out, one game's walk takes about four minutes: the two settle pauses and the click on
+ * the purchase button (up to 14 s, more when notices have to be cleared first), the three step
+ * budgets back to back (90 s, each overrun by at most one look of up to 3 s and the clicks it
+ * leads to, up to 5 s each), then up to three verification reloads of up to 37 s each (15 s to
+ * load, 12 s for the purchase button to appear, 10 s for it to settle) with 5 s between them. The
+ * driver's first read of the product page, before the walk, can add up to another 52 s.
  */
 export const CHECKOUT_TIMING: CheckoutTiming = {
   ctaSettleMs: 10_000,
@@ -106,6 +114,8 @@ export interface CheckoutProbe {
   owned(): Promise<boolean>;
   /** The purchase button's label on the page as it is now. */
   ctaLabel(): Promise<string | undefined>;
+  /** The product page has closed: nothing on it is left to wait for. */
+  closed(): boolean;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -169,6 +179,8 @@ const READER = {
   // `:not(:has(.payment-loading--loading))`, their issue #84).
   busy: ".payment-loading--loading",
   pin: ".payment-pin-code",
+  // Where a button's label is cut: enough for any label worth clicking, short enough for a summary.
+  labelMax: 80,
   // The post-order copy, which Epic changed three times in 2026: "It's all yours" (vogler dev
   // 28b0afc7), "Download the Epic Games Launcher to play" (50fef25e), "Is Epic Games Launcher
   // installed?" (ccb9e726). "Thanks for your order!" is the one before them all.
@@ -208,7 +220,7 @@ function readCheckoutView(sel: typeof READER): RawCheckoutView {
     const label = (b.getAttribute("aria-label") ?? "").trim() || text(b);
     if (!label) continue;
     buttons.push({
-      label: label.slice(0, 80),
+      label: label.slice(0, sel.labelMax),
       enabled: !(b as HTMLButtonElement).disabled && b.getAttribute("aria-disabled") !== "true",
       busy:
         b.matches(sel.busy) ||
@@ -234,7 +246,9 @@ function readCheckoutView(sel: typeof READER): RawCheckoutView {
     unavailable: new RegExp(sel.unavailable, "i").test(body),
     // Not required to be visible: a styled checkbox is often the 1px input behind its label.
     eula: agree !== null && !agree.checked,
-    pin: document.querySelector(sel.pin) !== null,
+    // Shown, like the captcha: a checkout can carry the PIN form hidden for accounts that never
+    // get asked, and a hidden one is no reason to stop.
+    pin: Array.from(document.querySelectorAll(sel.pin)).some(shown),
     cta: cta ? text(cta) : null,
   };
 }
@@ -248,6 +262,21 @@ export function isOwnedLabel(label: string | null | undefined): boolean {
   const l = (label ?? "").trim();
   if (!l || /^loading/i.test(l) || /\badd to\b|ajouter/i.test(l)) return false;
   return /in library|owned|installer|install|dans la biblioth|biblioth[eè]que/i.test(l);
+}
+
+/**
+ * The accessible name to click a button by, from the label the walk decided on. Anchored at both
+ * ends because getByRole takes a plain string name as a case-insensitive substring: the walk would
+ * decide on the EULA's "Accept" and click the cookie banner's "Accept All Cookies" before it, or
+ * a "Continue browsing" for a "Continue". Case-insensitive and loose on whitespace, since the label
+ * was read from rendered text and the name is computed from the DOM, and only anchored at its
+ * start when the reader may have cut the label short.
+ */
+export function buttonName(label: string): RegExp {
+  // Playwright drops these two from an accessible name before comparing it.
+  const name = label.replace(/[\u200b\u00ad]/g, "").replace(/\s+/g, " ").trim();
+  const body = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+");
+  return new RegExp(`^${body}${label.length >= READER.labelMax ? "" : "$"}`, "i");
 }
 
 /**
@@ -356,13 +385,14 @@ async function clearInterstitials(
  * for a captcha on the fresh page, so all a failure could ever say was the button's label.
  *
  * A captcha anywhere - the product page, the purchase window, or a frame inside it - ends the
- * walk with `captcha: true` for the caller's solve-or-hand-back path.
+ * walk with `captcha: true`, which the caller hands to a person.
  *
- * It waits for an outcome instead of a fixed time: Epic's confirmation in the window, or the
- * purchase button turning to its owned state, each within its budget. Either is then checked
- * against a reload of the product page, a few times since the library lags the order: the
- * checkout only says what it thinks happened, the library says what is true (the lesson
- * P-Adamiec/Free-Games-Claimer-Remaster v1.8 "Verify Epic claims" drew from phantom claims).
+ * It waits for an outcome instead of a fixed time: Epic's confirmation in the window once the
+ * confirm button was clicked, or the purchase button turning to its owned state, each within its
+ * budget. Either is then checked against a reload of the product page, a few times since the
+ * library lags the order: the checkout only says what it thinks happened, the library says what
+ * is true (the lesson P-Adamiec/Free-Games-Claimer-Remaster v1.8 "Verify Epic claims" drew from
+ * phantom claims).
  * Without either signal, one reload still decides - Epic has changed its confirmation copy often
  * enough that a claim may land with nothing here recognising it.
  */
@@ -417,12 +447,23 @@ export async function walkCheckout(
   let deadline = probe.now() + timing.openMs;
   let opened = false;
   let positive = false;
+  let ownedAll = false;
   let stop: string | undefined;
   let seenConfirm: CheckoutButton | undefined;
   let confirmRefused = false;
+  // Confirmation copy already in the window when it opened, next to a confirm button, is part of
+  // the window (a launcher hint, say) and not the order's outcome: it only counts once it has
+  // gone and come back.
+  let copyAtOpen = false;
   const errors = new Set<string>();
 
   for (;;) {
+    // A closed page answers every look with nothing and every pause at once; waiting on it would
+    // only run the budgets down.
+    if (probe.closed()) {
+      stop = "the product page closed before the checkout ended";
+      break;
+    }
     views = await probe.look();
     const page = views.find((v) => v.kind === "page");
     const checkout = checkoutViews(views);
@@ -430,6 +471,7 @@ export async function walkCheckout(
 
     if (!opened && (checkout.length > 0 || confirms.length > 0)) {
       opened = true;
+      copyAtOpen = checkout.some((v) => v.confirmed) && confirms.length > 0;
       trail.push(
         checkout.length > 0 ? "purchase window opened" : "checkout opened in a dialog on the page",
       );
@@ -470,7 +512,14 @@ export async function walkCheckout(
       break;
     }
 
-    if (checkout.some((v) => v.confirmed) || (page?.confirmed === true && !confirmedBefore)) {
+    const windowCopy = checkout.some((v) => v.confirmed);
+    if (copyAtOpen && checkout.length > 0 && !windowCopy) copyAtOpen = false;
+    // The copy is what Epic says once an order went through, so it only counts once the confirm
+    // button was clicked or none is showing any more; before that, next to a confirm button still
+    // waiting for its click, it can only be something else the window or the page says.
+    const settled = phase === "waiting" || confirms.length === 0;
+    const pageCopy = page?.confirmed === true && !confirmedBefore;
+    if (settled && ((windowCopy && !copyAtOpen) || pageCopy)) {
       trail.push("Epic confirmed the order");
       positive = true;
       break;
@@ -478,6 +527,12 @@ export async function walkCheckout(
     // The button turning to "In Library" in place is the one signal no copy change can break
     // (feldorn/free-games-claimer epic-games.js races it against the confirmation text).
     if (page && isOwnedLabel(page.cta)) {
+      // With no window open yet, nothing was ordered: the "Get" clicked was Epic's placeholder
+      // while it loaded ownership, only slower than the settle pause gave it.
+      if (!opened) {
+        ownedAll = true;
+        break;
+      }
       trail.push(`the purchase button turned to '${scrub(page.cta ?? "", 40)}'`);
       positive = true;
       break;
@@ -528,18 +583,31 @@ export async function walkCheckout(
     await probe.sleep(Math.min(timing.pollMs, left));
   }
 
-  if (positive) {
+  // The library has the last word, a few times over since it lags the order.
+  const verified = async (): Promise<boolean> => {
     for (let i = 0; i < timing.verifyTries; i++) {
       if (i > 0) await probe.sleep(timing.verifyGapMs);
-      if (await probe.owned()) return { claimed: true };
+      if (await probe.owned()) return true;
     }
+    return false;
+  };
+  const notShown = `the product page did not show it as owned after ${timing.verifyTries} reloads`;
+
+  if (ownedAll) {
+    if (await verified()) return { claimed: false, alreadyOwned: true };
+    const turned = scrub(views.find((v) => v.kind === "page")?.cta ?? "", 40);
     return {
       claimed: false,
       reason: reason(
-        `the product page did not show it as owned after ${timing.verifyTries} reloads`,
+        `the purchase button turned to '${turned}' before any purchase window opened`,
+        notShown,
         await stillReads(),
       ),
     };
+  }
+  if (positive) {
+    if (await verified()) return { claimed: true };
+    return { claimed: false, reason: reason(notShown, await stillReads()) };
   }
   if (await probe.owned()) return { claimed: true };
   return { claimed: false, reason: reason(stop, await stillReads()) };

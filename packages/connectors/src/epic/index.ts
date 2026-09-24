@@ -22,10 +22,6 @@ import {
   type FreeGame,
 } from "./driver.js";
 
-// Epic's store captcha site key (recaptcha). Placeholder — validate against the live page.
-const EPIC_RECAPTCHA_KEY = "6Lc5-key-placeholder";
-const EPIC_STORE_URL = "https://store.epicgames.com";
-
 /**
  * Epic's auth cookies, named in a signed-out summary so it says which part of the session is
  * gone: the short-lived tokens (EPIC_BEARER_TOKEN, EPIC_SSO) or the longer-lived cookies that
@@ -225,6 +221,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
 
       const claimed: string[] = [];
       const failed: string[] = [];
+      const claimedItems = () => claimed.map((title) => ({ kind: "game" as const, title }));
       // Each attempt's own trail goes to the worker log too. The run summary only carries it for a
       // failure; a captcha hand-back's summary does not, and that is where it says whether the
       // challenge came up in the purchase window or on the page.
@@ -237,28 +234,31 @@ export class EpicConnector implements Connector, InteractiveLogin {
           ...(res.reason ? { reason: res.reason } : {}),
         });
       for (const game of games) {
-        let res = await driver.claimGame(game);
+        const res = await driver.claimGame(game);
         note(game, res);
         if (res.captcha) {
-          const token = await ctx.captcha.solve({
-            type: "recaptcha_v2",
-            websiteURL: EPIC_STORE_URL,
-            websiteKey: EPIC_RECAPTCHA_KEY,
+          // Straight to a person, without the solver. Epic's checkout challenge is an hCaptcha
+          // inside its own purchase window, and a token solved elsewhere has nowhere to go in it:
+          // asking the solver would only spend its credit, and the run's time, on nothing.
+          ctx.emit({
+            type: "requires_human_action",
+            prompt: `Epic showed a captcha in the checkout for "${game.title}". Claim it in your own browser, then resume.`,
           });
-          if (token) {
-            res = await driver.claimGame(game, token);
-            note(game, res);
-          }
-          if (res.captcha) {
-            ctx.emit({
-              type: "requires_human_action",
-              prompt: `A captcha must be solved to claim "${game.title}". Solve it, then resume.`,
-            });
-            return {
-              outcome: "requires_human_action",
-              summary: `A captcha for "${game.title}" could not be solved automatically — human action needed.`,
-            };
-          }
+          const before = [
+            claimed.length > 0 ? `Claimed before it: ${claimed.join(", ")}.` : "",
+            failed.length > 0 ? `Could not complete: ${failed.join(", ")}.` : "",
+          ].filter(Boolean);
+          return {
+            outcome: "requires_human_action",
+            summary: [
+              `Epic showed a captcha in the checkout for "${game.title}"; it needs a person.`,
+              ...before,
+            ].join(" "),
+            // The pause keeps what this run already got: the games claimed before the captcha are
+            // in the library now, and the history should say so whether or not anyone resumes.
+            ...(claimed.length > 0 ? { claimedItems: claimedItems() } : {}),
+            accountFacts,
+          };
         }
         if (res.claimed) claimed.push(game.title);
         else if (!res.alreadyOwned) {
@@ -278,7 +278,7 @@ export class EpicConnector implements Connector, InteractiveLogin {
         return {
           outcome: "claimed",
           summary: `Claimed: ${claimed.join(", ")}${suffix}`,
-          claimedItems: claimed.map((title) => ({ kind: "game" as const, title })),
+          claimedItems: claimedItems(),
           accountFacts,
         };
       }

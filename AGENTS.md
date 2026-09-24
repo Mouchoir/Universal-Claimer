@@ -186,9 +186,13 @@ a real Epic login page streamed 73 JPEG frames end-to-end (worker CDP → web br
 Cosmetic TODO: the login page title is a hardcoded placeholder ("the service"). Epic checkout
 (Get → Add to library across the purchase iframe) is walked step by step with bounded waits, looks
 for a captcha inside the purchase window too, and returns the steps it reached as the failure
-reason (`walkCheckout` in `packages/connectors/src/epic/driver.ts`, docs/operations/epic-games.md).
-Its reference is `vogler/free-games-claimer` on the `dev` branch; selectors still need live
-validation.
+reason (`walkCheckout` in `packages/connectors/src/epic/checkout.ts`, driven by
+`PlaywrightEpicDriver` in `driver.ts`; docs/operations/epic-games.md). A checkout captcha goes
+straight to the operator (the solver is not asked: Epic's hCaptcha lives in its own purchase
+window), and the pause keeps the games claimed before it. Its reference is
+`vogler/free-games-claimer` on the `dev` branch; selectors still need live validation, and an
+opt-in real-browser suite (`EPIC_BROWSER_TESTS=1`, `tests/epic.checkout.browser.test.ts`) reads
+local stand-ins of the checkout in Chromium.
 
 Note: spec-kit commands in this repo are GitHub Copilot prompts under `.github/prompts/`;
 the PowerShell scripts under `.specify/scripts/powershell/` do the file scaffolding.

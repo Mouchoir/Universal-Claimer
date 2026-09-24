@@ -3,6 +3,7 @@ import type { BrowserCookie, SessionHandle } from "../connector.js";
 import {
   CHECKOUT_TIMING,
   NO_CTA,
+  buttonName,
   frameKind,
   isOwnedLabel,
   readFrame,
@@ -219,12 +220,14 @@ export interface EpicPageDriver {
   /** Free games claimable right now (title + product URL). */
   listClaimableGames(): Promise<FreeGame[]>;
   /**
-   * Claim one game. Pass a solved captcha token on a retry after a challenge.
+   * Claim one game.
    *
    * `reason` says where the checkout stopped when the claim did not go through (see
-   * {@link walkCheckout}), so a failure can say more than that it failed.
+   * {@link walkCheckout}), so a failure can say more than that it failed. There is no retry with
+   * a solved captcha token: Epic's checkout runs its hCaptcha inside its own purchase window,
+   * where a token solved elsewhere has nowhere to go, so a checkout captcha is a person's to clear.
    */
-  claimGame(game: FreeGame, captchaToken?: string): Promise<EpicClaimAttempt>;
+  claimGame(game: FreeGame): Promise<EpicClaimAttempt>;
   /** The account's own display name on the service, if it can be read. */
   getUsername(): Promise<string | undefined>;
   /** Read the current cookies from the browser context (assisted login). */
@@ -315,14 +318,27 @@ function firstLine(err: unknown): string {
   return message.split("\n")[0] ?? message;
 }
 
-/** Wait on the page's clock; a page that has closed has nothing left to wait for. */
+/**
+ * Wait on the page's clock. A page that has closed or crashed has no clock left: its
+ * waitForTimeout fails at once, and returning then would turn every polling loop into a spin
+ * until its deadline, so the wait falls back to the process's own timer. The next read of the
+ * page says what happened to it.
+ */
 async function pause(page: Page, ms: number): Promise<void> {
   try {
     await page.waitForTimeout(ms);
   } catch {
-    // Nothing to do: the next read of the page says what happened to it.
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 }
+
+/**
+ * How long a verification reload gets to load. Well under Playwright's default 30 s: the walk
+ * reloads up to three times, and a reload that has not loaded by then is a "not yet" (the
+ * post-order launcher dialog can hold a page's load, per feldorn/free-games-claimer v2.11.15),
+ * which the next reload or the next run settles.
+ */
+const VERIFY_LOAD_MS = 15_000;
 
 const CTA = "[data-testid='purchase-cta-button']";
 
@@ -482,18 +498,22 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     return {
       look: async () => {
         const main = page.mainFrame();
+        // All at once: each frame gets up to FRAME_READ_MS, and one after the other a stuck
+        // frame or two would stretch every look, and every step budget with it.
+        const read = await Promise.all(
+          page.frames().map(async (frame, i) => {
+            const kind = frameKind(frame, main);
+            const raw = kind ? await readFrame(frame) : undefined;
+            const id = String(i);
+            return kind && raw ? { id, frame, view: { id, kind, ...raw } } : undefined;
+          }),
+        );
         const next = new Map<string, Frame>();
         const views: CheckoutView[] = [];
-        const all = page.frames();
-        for (let i = 0; i < all.length; i++) {
-          const frame = all[i]!;
-          const kind = frameKind(frame, main);
-          if (!kind) continue;
-          const raw = await readFrame(frame);
-          if (!raw) continue;
-          const id = String(i);
-          next.set(id, frame);
-          views.push({ id, kind, ...raw });
+        for (const r of read) {
+          if (!r) continue;
+          next.set(r.id, r.frame);
+          views.push(r.view);
         }
         frames = next;
         return views;
@@ -509,10 +529,10 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
       press: async (view, label) => {
         const frame = frames.get(view.id);
         if (!frame) return false;
-        // The label as read, matched the way getByRole matches a name: case-insensitive, as a
-        // substring. A delay, as vogler dev epic-games.js clicks every checkout button.
+        // The whole label, not a substring of some other button's (see buttonName). A delay, as
+        // vogler dev epic-games.js clicks every checkout button.
         return frame
-          .getByRole("button", { name: label })
+          .getByRole("button", { name: buttonName(label) })
           .first()
           .click({ delay: 11, timeout: 5_000 })
           .then(
@@ -534,10 +554,11 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
             ),
         );
       },
-      // A reload that fails (the post-order launcher dialog can hold a page's load, per
-      // feldorn/free-games-claimer v2.11.15) says nothing about ownership; it is a "not yet".
-      owned: () => this.isOwned(url).catch(() => false),
+      // A reload that fails or runs out of VERIFY_LOAD_MS says nothing about ownership; it is a
+      // "not yet".
+      owned: () => this.isOwned(url, VERIFY_LOAD_MS).catch(() => false),
       ctaLabel: () => this.ctaLabel().catch(() => undefined),
+      closed: () => page.isClosed(),
       sleep: (ms) => pause(page, ms),
       now: () => Date.now(),
     };
@@ -557,10 +578,16 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     }
   }
 
-  /** Load the product page and decide whether the account already owns it (CTA is "In Library"). */
-  private async isOwned(url: string): Promise<boolean> {
+  /**
+   * Load the product page and decide whether the account already owns it (CTA is "In Library").
+   * `loadMs` bounds the load when this is a verification reload (see VERIFY_LOAD_MS).
+   */
+  private async isOwned(url: string, loadMs?: number): Promise<boolean> {
     const page = await this.page();
-    await page.goto(PlaywrightEpicDriver.english(url), { waitUntil: "domcontentloaded" });
+    await page.goto(PlaywrightEpicDriver.english(url), {
+      waitUntil: "domcontentloaded",
+      ...(loadMs !== undefined ? { timeout: loadMs } : {}),
+    });
     await page.waitForSelector(CTA, { timeout: 12_000 }).catch(() => undefined);
     const cta = page.locator(CTA).first();
     if ((await cta.count().catch(() => 0)) === 0) return false;

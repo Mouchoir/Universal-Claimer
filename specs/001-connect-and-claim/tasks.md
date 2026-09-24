@@ -138,7 +138,7 @@ in-portal + optional webhook notification, and resumable jobs.
 
 ### Tests
 
-- [X] T042 [P] [US4] Contract test: captcha fixture → auto-solve attempt → `requires_human_action` with stub solver (covered by the two captcha cases in `packages/connectors/tests/epic.claim.test.ts`)
+- [X] T042 [P] [US4] Contract test: captcha fixture → auto-solve attempt → `requires_human_action` with stub solver (covered by the captcha cases in `packages/connectors/tests/twitch.test.ts`; Epic's checkout captcha skips the solver and goes straight to human action, covered in `packages/connectors/tests/epic.claim.test.ts`)
 - [X] T043 [P] [US4] Integration test: human-action pause (unit in `apps/worker/src/run-claim.test.ts`) → resume (gated DB test in `apps/web/tests/claim.integration.test.ts`) + best-effort webhook (unit in `packages/notifications/src/index.test.ts`)
 - [X] T044 [P] [US4] Notifications package: outbound webhook delivery (Discord/Telegram/ntfy), best-effort, failures logged only in `packages/notifications/src/`
 - [X] T045 [US4] Worker: unsolved captcha → `requires_human_action` (non-terminal pause), notify (SSE + webhook); handled in `apps/worker/src/run-claim.ts` + `index.ts` (screenshot relay deferred; MVP uses hand-back per FR-014)

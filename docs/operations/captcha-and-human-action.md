@@ -12,6 +12,11 @@ rest are solved automatically; only what remains needs you.
 3. **Human action (fallback)** — if there is no key, or solving fails, the job pauses in the
    `requires_human_action` state and you are notified. **No VNC / remote desktop is used.**
 
+Epic's checkout skips the second layer: its challenge is an hCaptcha inside Epic's own purchase
+window, where a token solved elsewhere has nowhere to go, so a checkout captcha pauses the job for
+you at once (see [Epic Games](epic-games.md#captcha)). Games the run claimed before it are still
+recorded.
+
 ## What "human action" means here
 
 The MVP uses the **hand-back** model (FR-014): the job pauses, and you complete the challenge

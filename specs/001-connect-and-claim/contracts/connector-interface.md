@@ -82,6 +82,9 @@ export interface ConnectorContext {
 3. **Captcha layering**: on a detected challenge, call `ctx.captcha.solve(...)` first; if it
    returns null or fails, `ctx.emit({type: "requires_human_action", ...})` and await
    resolution — never open a VNC/remote desktop.
+   A challenge that cannot take a solved token goes straight to human action instead: Epic's
+   checkout hCaptcha lives in Epic's own purchase window, so the Epic connector does not call the
+   solver for it (docs/operations/epic-games.md).
 4. **Expired session**: if the session is no longer authenticated, return
    `outcome: "reauth_needed"` (do not loop retrying).
 5. **Idempotent-ish claim**: re-running when nothing is available returns

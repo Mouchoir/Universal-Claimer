@@ -71,26 +71,60 @@ describe("EpicConnector.claim", () => {
     expect(res.outcome).toBe("reauth_needed");
   });
 
-  it("auto-solves a captcha then claims", async () => {
+  it("hands a checkout captcha straight to a person, without asking the solver", async () => {
+    // Epic's checkout challenge is an hCaptcha in its own purchase window; a token solved
+    // elsewhere has nowhere to go there, so the solver would only be spent on nothing.
     let calls = 0;
-    const solver: CaptchaSolver = { solve: async () => "TOKEN" };
+    const solve = vi.fn(async () => "TOKEN");
+    const solver: CaptchaSolver = { solve };
     const connector = new EpicConnector({
       createDriver: () =>
         fakeDriver({
           listClaimableGames: async () => [{ title: "Game X", url: "https://store.epicgames.com/p/x" }],
-          claimGame: async (_t, token) => {
+          claimGame: async () => {
             calls += 1;
-            // First call reports captcha; retry with a token succeeds.
-            return token ? { claimed: true } : { claimed: false, captcha: true };
+            return { claimed: false, captcha: true };
           },
         }),
     });
-    const res = await connector.claim(sessionInput, fp, {},makeCtx({ captcha: solver }).ctx);
-    expect(res.outcome).toBe("claimed");
-    expect(calls).toBe(2);
+    const { ctx, events } = makeCtx({ captcha: solver });
+    const res = await connector.claim(sessionInput, fp, {}, ctx);
+    expect(res.outcome).toBe("requires_human_action");
+    expect(res.summary).toContain('captcha in the checkout for "Game X"');
+    expect(solve).not.toHaveBeenCalled();
+    expect(calls).toBe(1);
+    expect(events).toEqual([expect.objectContaining({ type: "requires_human_action" })]);
   });
 
-  it("emits requires_human_action and fails when captcha cannot be auto-solved", async () => {
+  it("a captcha hand-back keeps the games claimed before it, and the account's facts", async () => {
+    const connector = new EpicConnector({
+      createDriver: () =>
+        fakeDriver({
+          listClaimableGames: async () => [
+            { title: "Game X", url: "https://store.epicgames.com/p/x" },
+            { title: "Game Y", url: "https://store.epicgames.com/p/y" },
+            { title: "Game Z", url: "https://store.epicgames.com/p/z" },
+          ],
+          claimGame: async (game) =>
+            game.title === "Game X"
+              ? { claimed: true }
+              : game.title === "Game Y"
+                ? { claimed: false, reason: "no purchase button on the page" }
+                : { claimed: false, captcha: true },
+        }),
+    });
+    const res = await connector.claim(sessionInput, fp, {}, makeCtx().ctx);
+    expect(res).toEqual({
+      outcome: "requires_human_action",
+      summary:
+        'Epic showed a captcha in the checkout for "Game Z"; it needs a person. ' +
+        "Claimed before it: Game X. Could not complete: Game Y (no purchase button on the page).",
+      claimedItems: [{ kind: "game", title: "Game X" }],
+      accountFacts: { username: "ExampleUser" },
+    });
+  });
+
+  it("emits requires_human_action on a checkout captcha", async () => {
     const connector = new EpicConnector({
       createDriver: () =>
         fakeDriver({
@@ -98,7 +132,7 @@ describe("EpicConnector.claim", () => {
           claimGame: async () => ({ claimed: false, captcha: true }),
         }),
     });
-    const { ctx, events } = makeCtx(); // NullCaptchaSolver → returns null
+    const { ctx, events } = makeCtx();
     const res = await connector.claim(sessionInput, fp, {},ctx);
     expect(res.outcome).toBe("requires_human_action");
     expect(events.some((e) => e.type === "requires_human_action")).toBe(true);

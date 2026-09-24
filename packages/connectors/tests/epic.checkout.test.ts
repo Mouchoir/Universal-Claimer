@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PlaywrightEpicDriver, SIGN_IN_TIMING } from "../src/epic/driver.js";
 import {
   CHECKOUT_TIMING,
+  buttonName,
   isOwnedLabel,
   walkCheckout,
   type CheckoutButton,
@@ -52,6 +53,8 @@ function scripted(opts: {
   clickError?: string;
   /** Clicks on these labels do not go through (something covers the button). */
   refuse?: RegExp;
+  /** The product page has closed (the browser went away) from this point on. */
+  closed?: (seen: Seen) => boolean;
 }): { probe: CheckoutProbe; seen: Seen } {
   const seen: Seen = { t: 0, pressed: [], agreed: 0, reloads: 0 };
   const probe: CheckoutProbe = {
@@ -75,6 +78,7 @@ function scripted(opts: {
       return opts.owned?.(seen) ?? false;
     },
     ctaLabel: async () => "Get",
+    closed: () => opts.closed?.(seen) ?? false,
     sleep: async (ms) => {
       seen.t += ms;
     },
@@ -340,6 +344,114 @@ describe("walkCheckout", () => {
     });
     expect(seen.reloads).toBe(0);
   });
+
+  it("confirmation copy already in the window next to its confirm button is not the outcome", async () => {
+    // A launcher hint that reads like Epic's post-order copy, there from the moment the window
+    // opens. Taken for the outcome, it skipped the confirm click and reported a phantom order.
+    const { probe, seen } = scripted({
+      views: freeCheckout({ window: { confirmed: true } }),
+      owned: (s) => pressedAt(s, /add to library/i) !== undefined,
+    });
+    const res = await walkCheckout(probe, { ...CHECKOUT_TIMING, outcomeMs: 2_000 });
+    expect(res).toEqual({ claimed: true });
+    expect(pressedAt(seen, /add to library/i)).toBeDefined();
+    // Still there after the click, it is not taken for Epic's word either: the wait ran out and
+    // the one reload decided.
+    expect(seen.t - pressedAt(seen, /add to library/i)!).toBeGreaterThanOrEqual(2_000);
+    expect(seen.reloads).toBe(1);
+  });
+
+  it("copy that was in the window at open counts once it has gone and come back after the click", async () => {
+    const { probe, seen } = scripted({
+      views: (s) => {
+        if (s.clickedCta === undefined) return [view("page")];
+        const at = pressedAt(s, /add to library/i);
+        // The window re-renders after the click (busy button, no copy), then shows the outcome.
+        const phase = at === undefined ? "before" : s.t - at < 1_000 ? "busy" : "done";
+        return [
+          view("page"),
+          view("checkout", {
+            buttons: phase === "done" ? [] : [button("Add to library", { busy: phase === "busy" })],
+            confirmed: phase !== "busy",
+          }),
+        ];
+      },
+      owned: () => true,
+    });
+    expect(await walkCheckout(probe)).toEqual({ claimed: true });
+    const waited = seen.t - pressedAt(seen, /add to library/i)!;
+    expect(waited).toBeGreaterThanOrEqual(1_000);
+    expect(waited).toBeLessThan(CHECKOUT_TIMING.outcomeMs);
+  });
+
+  it("a window that opens straight onto the confirmation, with no confirm button, is a confirmation", async () => {
+    const { probe, seen } = scripted({
+      views: (s) => [
+        view("page"),
+        ...(s.clickedCta !== undefined ? [view("checkout", { confirmed: true })] : []),
+      ],
+      owned: () => true,
+    });
+    expect(await walkCheckout(probe)).toEqual({ claimed: true });
+    expect(seen.pressed).toEqual([]);
+    expect(seen.t).toBeLessThan(CHECKOUT_TIMING.settleMs + CHECKOUT_TIMING.pollMs * 3);
+  });
+
+  it("confirmation copy on the page while the confirm button waits for its click is not the outcome", async () => {
+    const { probe, seen } = scripted({
+      views: (s) => {
+        if (s.clickedCta === undefined) return [view("page")];
+        const ordered = pressedAt(s, /add to library/i) !== undefined;
+        return [
+          view("page", { confirmed: true }),
+          view("checkout", { buttons: ordered ? [] : [button("Add to library")] }),
+        ];
+      },
+      owned: (s) => pressedAt(s, /add to library/i) !== undefined,
+    });
+    expect(await walkCheckout(probe)).toEqual({ claimed: true });
+    expect(pressedAt(seen, /add to library/i)).toBeDefined();
+  });
+
+  it("a placeholder Get that turns to In Library after the click, with no window, is already owned", async () => {
+    const { probe, seen } = scripted({
+      views: (s) => [
+        view("page", {
+          cta: s.clickedCta !== undefined && s.t - s.clickedCta >= 1_000 ? "In Library" : "Get",
+        }),
+      ],
+      owned: () => true,
+    });
+    expect(await walkCheckout(probe)).toEqual({ claimed: false, alreadyOwned: true });
+    // Checked against a reload first, and nothing waited out the window's budget.
+    expect(seen.reloads).toBe(1);
+    expect(seen.t - seen.clickedCta!).toBeLessThan(CHECKOUT_TIMING.openMs);
+  });
+
+  it("an In Library the reloaded page does not back up is not taken for owned", async () => {
+    const { probe, seen } = scripted({
+      views: (s) => [view("page", { cta: s.clickedCta !== undefined ? "In Library" : "Get" })],
+    });
+    const res = await walkCheckout(probe);
+    expect(res.claimed).toBe(false);
+    expect(res.alreadyOwned).toBeUndefined();
+    expect(res.reason).toContain(
+      "clicked 'Get'; the purchase button turned to 'In Library' before any purchase window opened; " +
+        "the product page did not show it as owned after 3 reloads",
+    );
+    expect(seen.reloads).toBe(CHECKOUT_TIMING.verifyTries);
+  });
+
+  it("a page that closes mid-checkout ends the walk at once, and says so", async () => {
+    const { probe, seen } = scripted({
+      views: freeCheckout(),
+      closed: (s) => s.clickedCta !== undefined && s.t - s.clickedCta >= 1_000,
+    });
+    const res = await walkCheckout(probe);
+    expect(res.claimed).toBe(false);
+    expect(res.reason).toContain("the product page closed before the checkout ended");
+    expect(seen.t - seen.clickedCta!).toBeLessThan(1_000 + CHECKOUT_TIMING.pollMs * 2);
+  });
 });
 
 describe("isOwnedLabel", () => {
@@ -351,6 +463,31 @@ describe("isOwnedLabel", () => {
     expect(isOwnedLabel("Ajouter à la bibliothèque")).toBe(false);
     expect(isOwnedLabel("Loading")).toBe(false);
     expect(isOwnedLabel(null)).toBe(false);
+  });
+});
+
+describe("buttonName", () => {
+  it("matches the whole label, never a longer button that starts with it", () => {
+    expect(buttonName("Accept").test("Accept")).toBe(true);
+    expect(buttonName("Accept").test("Accept All Cookies")).toBe(false);
+    expect(buttonName("Continue").test("Continue browsing")).toBe(false);
+    expect(buttonName("I Accept").test("Accept")).toBe(false);
+  });
+
+  it("is loose on case and whitespace, which rendering changes", () => {
+    expect(buttonName("ADD TO LIBRARY").test("Add to library")).toBe(true);
+    expect(buttonName("Add  to​ library").test("Add to library")).toBe(true);
+  });
+
+  it("takes the label as text, not as a pattern", () => {
+    expect(buttonName("Yes, buy now (1)").test("Yes, buy now (1)")).toBe(true);
+    expect(buttonName("a.b").test("axb")).toBe(false);
+  });
+
+  it("only anchors the start of a label the reader cut short", () => {
+    const long = `Add to library ${"x".repeat(70)}`;
+    expect(buttonName(long.slice(0, 80)).test(`${long} and more`)).toBe(true);
+    expect(buttonName(long.slice(0, 80)).test(`Not ${long}`)).toBe(false);
   });
 });
 
@@ -383,6 +520,17 @@ const NOTHING = {
 };
 
 /**
+ * How getByRole matches a name, as far as these fakes need it: a pattern is tested against the
+ * accessible name, a string is a case-insensitive substring of it unless `exact` is set.
+ */
+function roleNameMatches(accessible: string, name: string | RegExp, exact?: boolean): boolean {
+  const norm = accessible.replace(/\s+/g, " ").trim();
+  if (name instanceof RegExp) return name.test(norm);
+  const want = name.replace(/\s+/g, " ").trim();
+  return exact ? norm === want : norm.toLowerCase().includes(want.toLowerCase());
+}
+
+/**
  * A product page whose purchase button opens a purchase window, both scripted against the time
  * the driver has asked to wait. Clicking "Add to library" places the order; Epic confirms it
  * `confirmsAfter` ms later (never, if left out), and a reload from then on shows it owned.
@@ -394,54 +542,122 @@ function storePage(s: {
   /** Where a captcha challenge shows: the purchase window itself, or a frame inside it. */
   captchaIn?: "window" | "nested";
   confirmsAfter?: number;
+  /**
+   * A cookie banner's "Accept All Cookies" on the page from the start, and after the click a EULA
+   * dialog behind it, whose agree box and "Accept" stand before the purchase window.
+   */
+  eula?: boolean;
+  /** The page closes once the purchase button was clicked. */
+  closesAfterGet?: boolean;
+  /** The page's clock fails (a crashed page): every waitForTimeout rejects at once. */
+  clockFails?: boolean;
 }) {
   let waited = 0;
-  let gotos = 0;
   let getAt: number | undefined;
+  let acceptedAt: number | undefined;
   let orderAt: number | undefined;
   let sinceOrderAtReload: number | undefined;
   let owned = false;
+  let agreed = false;
+  let inFlight = 0;
+  let mostInFlight = 0;
+  const gotoTimeouts: (number | undefined)[] = [];
   const clicks: string[] = [];
   const read: string[] = [];
   const confirmed = () =>
     orderAt !== undefined && waited - orderAt >= (s.confirmsAfter ?? Infinity);
-  const open = () => getAt !== undefined && waited - getAt >= (s.opensAfter ?? 0);
+  // With a EULA in the way, the window opens once it was accepted.
+  const openedFrom = () => (s.eula ? acceptedAt : getAt);
+  const open = () => {
+    const from = openedFrom();
+    return from !== undefined && waited - from >= (s.opensAfter ?? 0);
+  };
+  const closed = () => s.closesAfterGet === true && getAt !== undefined;
   const label = () => (owned ? "In Library" : "Get");
+  const eulaShowing = () => s.eula === true && getAt !== undefined && acceptedAt === undefined;
+  const shown = (text: string, inDialog = false): CheckoutButton => ({
+    label: text,
+    enabled: true,
+    busy: false,
+    inDialog,
+  });
 
-  const frame = (name: string, url: string, parent: unknown, contents: () => unknown) => ({
+  type Contents = typeof NOTHING;
+  const frame = (
+    name: string,
+    url: string,
+    parent: unknown,
+    contents: () => Contents,
+    onClick: (label: string) => void = () => undefined,
+  ) => ({
     url: () => url,
     parentFrame: () => parent,
     evaluate: async () => {
+      // Held over a turn of the event loop, so reads that overlap can be told from reads in turn.
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight -= 1;
       read.push(name);
       return contents();
     },
-    getByRole: (_role: string, opts: { name: string }) => {
+    getByRole: (_role: string, opts: { name: string | RegExp; exact?: boolean }) => {
       const target = {
         first: () => target,
+        // The first button whose name matches, in page order, as Playwright would pick it.
         click: async () => {
-          clicks.push(opts.name);
-          if (/add to library/i.test(opts.name)) orderAt = waited;
+          const hit = contents().buttons.find((b) => roleNameMatches(b.label, opts.name, opts.exact));
+          if (!hit) throw new Error("locator.click: Timeout 5000ms exceeded.");
+          clicks.push(hit.label);
+          onClick(hit.label);
         },
       };
       return target;
     },
     locator: () => {
-      const box = { first: () => box, check: async () => undefined };
+      const box = {
+        first: () => box,
+        check: async () => {
+          if (name === "page") agreed = true;
+        },
+      };
       return box;
     },
   });
-  const main = frame("page", PRODUCT, null, () => ({ ...NOTHING, cta: label() }));
-  const purchase = frame("window", PURCHASE, main, () => ({
-    ...NOTHING,
-    buttons: (s.buttons ?? ["Add to library"]).map((l) => ({
-      label: l,
-      enabled: true,
-      busy: false,
-      inDialog: false,
-    })),
-    captcha: s.captchaIn === "window",
-    confirmed: confirmed(),
-  }));
+  let cookiesAccepted = false;
+  const main = frame(
+    "page",
+    PRODUCT,
+    null,
+    () => ({
+      ...NOTHING,
+      cta: label(),
+      eula: eulaShowing() && !agreed,
+      buttons: [
+        // Epic's cookie banner is a dialog too, and it comes first in the page.
+        ...(s.eula && !cookiesAccepted ? [shown("Accept All Cookies", true)] : []),
+        ...(eulaShowing() ? [shown("Accept", true)] : []),
+      ],
+    }),
+    (clicked) => {
+      if (clicked === "Accept All Cookies") cookiesAccepted = true;
+      if (clicked === "Accept" && agreed) acceptedAt = waited;
+    },
+  );
+  const purchase = frame(
+    "window",
+    PURCHASE,
+    main,
+    () => ({
+      ...NOTHING,
+      buttons: (s.buttons ?? ["Add to library"]).map((l) => shown(l)),
+      captcha: s.captchaIn === "window",
+      confirmed: confirmed(),
+    }),
+    (clicked) => {
+      if (/add to library/i.test(clicked)) orderAt = waited;
+    },
+  );
   // A frame inside the purchase window holding the challenge, and hCaptcha's own frame inside
   // that, which is never read: the frame holding it says whether it shows.
   const nested = frame("nested", "about:blank", purchase, () => ({
@@ -465,28 +681,33 @@ function storePage(s: {
     },
   };
   const page = {
-    goto: async () => {
-      gotos += 1;
+    goto: async (_url: string, opts?: { timeout?: number }) => {
+      gotoTimeouts.push(opts?.timeout);
       if (orderAt !== undefined) sinceOrderAtReload = waited - orderAt;
       if (confirmed()) owned = true;
       // A reload is a fresh document: the purchase window is gone with the old one.
       getAt = undefined;
+      acceptedAt = undefined;
       orderAt = undefined;
       return null;
     },
     waitForSelector: async () => undefined,
     waitForTimeout: async (ms: number) => {
+      if (s.clockFails || closed()) throw new Error("Target page, context or browser has been closed");
       waited += ms;
     },
+    isClosed: () => closed(),
     locator: () => cta,
     mainFrame: () => main,
-    frames: () => (open() ? [main, purchase, nested, hcaptcha] : [main]),
+    frames: () => (closed() ? [] : open() ? [main, purchase, nested, hcaptcha] : [main]),
   };
   return {
     session: { context: { pages: () => [page] } } as unknown as SessionHandle,
     clicks,
     read,
-    gotos: () => gotos,
+    gotos: () => gotoTimeouts.length,
+    gotoTimeouts,
+    mostInFlight: () => mostInFlight,
     sinceOrderAtReload: () => sinceOrderAtReload,
   };
 }
@@ -549,5 +770,41 @@ describe("PlaywrightEpicDriver.claimGame checkout", () => {
         "clicked 'Get'; purchase window opened; clicked 'Add to library'; no confirmation within 50 ms; " +
         "the purchase button still reads 'Get'",
     });
+  });
+
+  it("clicks the EULA's Accept, never the cookie banner's Accept All Cookies before it", async () => {
+    // getByRole takes a string name as a substring, so asking for "Accept" clicked whichever
+    // button containing it came first: here, the cookie banner.
+    const page = storePage({ eula: true, confirmsAfter: 0 });
+    expect(await driver(page).claimGame(game)).toEqual({ claimed: true });
+    expect(page.clicks).toEqual(["Get", "Accept", "Add to library"]);
+  });
+
+  it("reads every frame of a look at once, not one after the other", async () => {
+    const page = storePage({ captchaIn: "nested" });
+    await driver(page).claimGame(game);
+    // The page, the purchase window and the frame inside it, all in flight together.
+    expect(page.mostInFlight()).toBe(3);
+  });
+
+  it("bounds each verification reload, and leaves the first load of the page as it was", async () => {
+    const page = storePage({ confirmsAfter: 0 });
+    expect(await driver(page).claimGame(game)).toEqual({ claimed: true });
+    expect(page.gotoTimeouts).toEqual([undefined, 15_000]);
+  });
+
+  it("a page that closes during the checkout ends it with that reason", async () => {
+    const page = storePage({ closesAfterGet: true });
+    const res = await driver(page, { ...FAST, openMs: 60_000 }).claimGame(game);
+    expect(res.claimed).toBe(false);
+    expect(res.reason).toContain("clicked 'Get'; the product page closed before the checkout ended");
+  });
+
+  it("waits on a timer when the page's own clock fails, instead of spinning to the deadline", async () => {
+    const page = storePage({ opensAfter: Infinity, clockFails: true });
+    const res = await driver(page, { ...FAST, openMs: 100, pollMs: 10 }).claimGame(game);
+    expect(res.reason).toContain("the purchase window did not open within 100 ms");
+    // About one look per poll over the 100 ms, where a spin makes it hundreds.
+    expect(page.read.length).toBeLessThan(30);
   });
 });
