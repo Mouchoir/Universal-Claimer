@@ -24,7 +24,8 @@ A claim for the Twitch account:
 4. Otherwise clicks Subscribe → Use Prime → Subscribe with Prime → **claimed**. A resub that did
    not go through is **failed**, with the reason.
 5. Expired session → **reauth_needed** (reconnect the account). Channel not found →
-   **failed**. Captcha → auto-solve, else human action (same layered strategy as Epic).
+   **failed**. Captcha → auto-solve, else human action (the layered strategy in
+   [captcha-and-human-action.md](captcha-and-human-action.md)).
 
 ## Reading an "already active" summary
 

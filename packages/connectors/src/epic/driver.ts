@@ -1,5 +1,18 @@
-import type { BrowserContext, Page, Response } from "playwright-core";
+import type { BrowserContext, Frame, Page, Response } from "playwright-core";
 import type { BrowserCookie, SessionHandle } from "../connector.js";
+import {
+  CHECKOUT_TIMING,
+  NO_CTA,
+  buttonName,
+  frameKind,
+  isOwnedLabel,
+  readFrame,
+  walkCheckout,
+  type CheckoutProbe,
+  type CheckoutTiming,
+  type CheckoutView,
+  type EpicClaimAttempt,
+} from "./checkout.js";
 
 /**
  * Where the signed-in check ended up.
@@ -207,15 +220,14 @@ export interface EpicPageDriver {
   /** Free games claimable right now (title + product URL). */
   listClaimableGames(): Promise<FreeGame[]>;
   /**
-   * Claim one game. Pass a solved captcha token on a retry after a challenge.
+   * Claim one game.
    *
-   * `reason` carries whatever the store showed when the claim did not go through — the purchase
-   * button's own text, usually — so a failure can say more than that it failed.
+   * `reason` says where the checkout stopped when the claim did not go through (see
+   * {@link walkCheckout}), so a failure can say more than that it failed. There is no retry with
+   * a solved captcha token: Epic's checkout runs its hCaptcha inside its own purchase window,
+   * where a token solved elsewhere has nowhere to go, so a checkout captcha is a person's to clear.
    */
-  claimGame(
-    game: FreeGame,
-    captchaToken?: string,
-  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean; reason?: string }>;
+  claimGame(game: FreeGame): Promise<EpicClaimAttempt>;
   /** The account's own display name on the service, if it can be read. */
   getUsername(): Promise<string | undefined>;
   /** Read the current cookies from the browser context (assisted login). */
@@ -300,19 +312,55 @@ export function parseFreeGamesResponse(json: unknown, now: number): FreeGame[] {
   return out;
 }
 
+/** The first line of an error, which for Playwright is the part that says what went wrong. */
+function firstLine(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.split("\n")[0] ?? message;
+}
+
+/**
+ * Wait on the page's clock. A page that has closed or crashed has no clock left: its
+ * waitForTimeout fails at once, and returning then would turn every polling loop into a spin
+ * until its deadline, so the wait falls back to the process's own timer. The next read of the
+ * page says what happened to it.
+ */
+async function pause(page: Page, ms: number): Promise<void> {
+  try {
+    await page.waitForTimeout(ms);
+  } catch {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+/**
+ * How long a verification reload gets to load. Well under Playwright's default 30 s: the walk
+ * reloads up to three times, and a reload that has not loaded by then is a "not yet" (the
+ * post-order launcher dialog can hold a page's load, per feldorn/free-games-claimer v2.11.15),
+ * which the next reload or the next run settles.
+ */
+const VERIFY_LOAD_MS = 15_000;
+
+const CTA = "[data-testid='purchase-cta-button']";
+
 /**
  * Real Playwright-backed driver. Selectors target the current Epic UI and are best-effort:
  * platform UI changes are the dominant cause of connector breakage (see research), so this
  * is exactly the surface the connector health monitor guards. Mostly not exercised in unit
- * tests (those use a fake driver; the sign-in verdict lives in {@link settleSignIn}, which is);
- * validated in a live/browser environment.
+ * tests (those use a fake driver; the sign-in verdict lives in {@link settleSignIn} and the
+ * checkout's in {@link walkCheckout}, which are); validated in a live/browser environment.
  */
 export class PlaywrightEpicDriver implements EpicPageDriver {
   private readonly context: BrowserContext;
   private readonly timing: SignInTiming;
-  constructor(session: SessionHandle, timing: SignInTiming = SIGN_IN_TIMING) {
+  private readonly checkout: CheckoutTiming;
+  constructor(
+    session: SessionHandle,
+    timing: SignInTiming = SIGN_IN_TIMING,
+    checkout: CheckoutTiming = CHECKOUT_TIMING,
+  ) {
     this.context = session.context;
     this.timing = timing;
+    this.checkout = checkout;
   }
 
   private async page(): Promise<Page> {
@@ -425,52 +473,95 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     }
   }
 
-  async claimGame(
-    game: FreeGame,
-  ): Promise<{ claimed: boolean; captcha?: boolean; alreadyOwned?: boolean; reason?: string }> {
+  async claimGame(game: FreeGame): Promise<EpicClaimAttempt> {
     const page = await this.page();
     if (await this.isOwned(game.url)) return { claimed: false, alreadyOwned: true };
 
-    const cta = page.locator("[data-testid='purchase-cta-button']").first();
+    const cta = page.locator(CTA).first();
     // Not "already owned". Ownership is what isOwned just read off the button's own label; no
     // button at all means the page did not look the way this code expects - a challenge, a page
     // that never rendered, a renamed test id - and calling that owned is how a claim that never
     // happened reported itself as nothing to do.
-    if ((await cta.count().catch(() => 0)) === 0) {
-      return { claimed: false, reason: "no purchase button on the page" };
-    }
-    await cta.click().catch(() => undefined);
+    if ((await cta.count().catch(() => 0)) === 0) return { claimed: false, reason: NO_CTA };
 
-    // The free-checkout opens in a store.epicgames.com/purchase iframe whose confirm button is
-    // "Add to library" (paid titles say "Place Order"). An *invisible* hCaptcha runs on submit
-    // and passes automatically for a genuine session. Click confirm (+ any EULA) in that frame.
-    // The English labels are reliable because the store locale is pinned to en-US above; the
-    // extra localized alternatives are a harmless fallback if Epic ever ignores that pin.
-    const purchase = await this.waitForFrame(page, /\/purchase/, 12_000);
-    if (purchase) {
-      const confirm = purchase
-        .getByRole("button", {
-          name: /add to library|place order|ajouter .*biblioth|passer la commande|obtenir/i,
-        })
-        .first();
-      await confirm.click({ timeout: 10_000 }).catch(() => undefined);
-      const agree = purchase
-        .getByRole("button", { name: /i agree|accept|j['’]accepte/i })
-        .first();
-      await agree.click({ timeout: 4000 }).catch(() => undefined);
-    }
-    await page.waitForTimeout(5000).catch(() => undefined);
+    // The free checkout opens in a purchase window (an iframe) whose confirm button is "Add to
+    // library"; an invisible hCaptcha runs on submit and passes by itself for a genuine session.
+    // The English labels hold because the store locale is pinned to en-US, both in the URL and
+    // in the browser context's own locale. Only the verdict is Epic's; see walkCheckout for how
+    // each step is read and recorded.
+    return walkCheckout(this.checkoutProbe(page, game.url), this.checkout);
+  }
 
-    // Verify: only report success if the game is actually in the library now. Otherwise the
-    // checkout did not complete (e.g. an interactive hCaptcha challenge) — report honestly
-    // rather than claiming a phantom success.
-    if (await this.isOwned(game.url)) return { claimed: true };
-    if (await this.detectCaptcha(page)) return { claimed: false, captcha: true };
-    // Say what the store actually showed. "Could not complete checkout" is true of a blocked
-    // purchase, of a page that never offered one, and of a claim that worked but whose ownership
-    // this code cannot recognise — three different problems that used to read identically, and
-    // the last one repeats every day while looking like a bug in the claiming.
-    return { claimed: false, reason: await this.ctaLabel().catch(() => undefined) };
+  /** The checkout walk's view of this page: every Epic frame read in one go, clicks with a delay. */
+  private checkoutProbe(page: Page, url: string): CheckoutProbe {
+    let frames = new Map<string, Frame>();
+    return {
+      look: async () => {
+        const main = page.mainFrame();
+        // All at once: each frame gets up to FRAME_READ_MS, and one after the other a stuck
+        // frame or two would stretch every look, and every step budget with it.
+        const read = await Promise.all(
+          page.frames().map(async (frame, i) => {
+            const kind = frameKind(frame, main);
+            const raw = kind ? await readFrame(frame) : undefined;
+            const id = String(i);
+            return kind && raw ? { id, frame, view: { id, kind, ...raw } } : undefined;
+          }),
+        );
+        const next = new Map<string, Frame>();
+        const views: CheckoutView[] = [];
+        for (const r of read) {
+          if (!r) continue;
+          next.set(r.id, r.frame);
+          views.push(r.view);
+        }
+        frames = next;
+        return views;
+      },
+      clickCta: async () => {
+        try {
+          await page.locator(CTA).first().click({ delay: 11, timeout: 10_000 });
+          return undefined;
+        } catch (err) {
+          return firstLine(err);
+        }
+      },
+      press: async (view, label) => {
+        const frame = frames.get(view.id);
+        if (!frame) return false;
+        // The whole label, not a substring of some other button's (see buttonName). A delay, as
+        // vogler dev epic-games.js clicks every checkout button.
+        return frame
+          .getByRole("button", { name: buttonName(label) })
+          .first()
+          .click({ delay: 11, timeout: 5_000 })
+          .then(
+            () => true,
+            () => false,
+          );
+      },
+      agree: async (view) => {
+        const frame = frames.get(view.id);
+        if (!frame) return false;
+        const box = frame.locator("input#agree").first();
+        // A styled checkbox can be a hidden input behind its label, which a normal check refuses.
+        return box.check({ timeout: 5_000 }).then(
+          () => true,
+          () =>
+            box.check({ force: true, timeout: 5_000 }).then(
+              () => true,
+              () => false,
+            ),
+        );
+      },
+      // A reload that fails or runs out of VERIFY_LOAD_MS says nothing about ownership; it is a
+      // "not yet".
+      owned: () => this.isOwned(url, VERIFY_LOAD_MS).catch(() => false),
+      ctaLabel: () => this.ctaLabel().catch(() => undefined),
+      closed: () => page.isClosed(),
+      sleep: (ms) => pause(page, ms),
+      now: () => Date.now(),
+    };
   }
 
   /**
@@ -487,37 +578,38 @@ export class PlaywrightEpicDriver implements EpicPageDriver {
     }
   }
 
-  /** Load the product page and decide whether the account already owns it (CTA is "In Library"). */
-  private async isOwned(url: string): Promise<boolean> {
+  /**
+   * Load the product page and decide whether the account already owns it (CTA is "In Library").
+   * `loadMs` bounds the load when this is a verification reload (see VERIFY_LOAD_MS).
+   */
+  private async isOwned(url: string, loadMs?: number): Promise<boolean> {
     const page = await this.page();
-    await page.goto(PlaywrightEpicDriver.english(url), { waitUntil: "domcontentloaded" });
-    await page
-      .waitForSelector("[data-testid='purchase-cta-button']", { timeout: 12_000 })
-      .catch(() => undefined);
-    const cta = page.locator("[data-testid='purchase-cta-button']").first();
+    await page.goto(PlaywrightEpicDriver.english(url), {
+      waitUntil: "domcontentloaded",
+      ...(loadMs !== undefined ? { timeout: loadMs } : {}),
+    });
+    await page.waitForSelector(CTA, { timeout: 12_000 }).catch(() => undefined);
+    const cta = page.locator(CTA).first();
     if ((await cta.count().catch(() => 0)) === 0) return false;
-    const label = ((await cta.textContent().catch(() => "")) ?? "").toLowerCase();
-    return /in library|owned|installer|install|dans la biblioth|biblioth[eè]que/i.test(label);
+    // The button renders empty, then "Loading", before it says anything about the account; read
+    // too early, an owned game looks unowned (vogler dev epic-games.js, commit 5938bf46).
+    const deadline = Date.now() + this.checkout.ctaSettleMs;
+    let label = "";
+    for (;;) {
+      label = ((await cta.textContent().catch(() => "")) ?? "").trim();
+      if ((label && !/^loading/i.test(label)) || Date.now() >= deadline) break;
+      await pause(page, this.checkout.pollMs);
+    }
+    return isOwnedLabel(label);
   }
 
   /** The purchase button's current text, which is the store's own account of where this ended. */
   private async ctaLabel(): Promise<string | undefined> {
     const page = await this.page();
-    const cta = page.locator("[data-testid='purchase-cta-button']").first();
-    if ((await cta.count().catch(() => 0)) === 0) return "no purchase button on the page";
+    const cta = page.locator(CTA).first();
+    if ((await cta.count().catch(() => 0)) === 0) return NO_CTA;
     const label = ((await cta.textContent().catch(() => "")) ?? "").trim();
     return label || undefined;
-  }
-
-  /** Poll the page's frames for one whose URL matches, up to `timeoutMs`. */
-  private async waitForFrame(page: Page, re: RegExp, timeoutMs: number) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const frame = page.frames().find((f) => re.test(f.url()));
-      if (frame) return frame;
-      await page.waitForTimeout(300).catch(() => undefined);
-    }
-    return undefined;
   }
 
   /**
