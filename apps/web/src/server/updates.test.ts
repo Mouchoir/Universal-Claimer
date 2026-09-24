@@ -111,3 +111,44 @@ describe("parseReleases", () => {
     expect(parseReleases([null, 42, { body: "no tag" }])).toEqual([]);
   });
 });
+
+describe("release ordering", () => {
+  // Exactly what GitHub returned: same-day releases sorted by tag name, not by time. Trusting that
+  // order told an instance on the newest version that two older ones were updates.
+  const asListed = [
+    { tag_name: "v2026.09.23-e98e716", body: "a", published_at: "2026-09-23T18:06:01Z" },
+    { tag_name: "v2026.09.23-5f08ac2", body: "b", published_at: "2026-09-23T21:45:42Z" },
+    { tag_name: "v2026.09.23-224e728", body: "c", published_at: "2026-09-23T22:43:18Z" },
+    { tag_name: "v2026.09.22-c6a5566", body: "d", published_at: "2026-09-22T21:28:27Z" },
+  ];
+
+  it("puts releases in publication order, whatever order they are listed in", () => {
+    expect(parseReleases(asListed).map((r) => r.version)).toEqual([
+      "v2026.09.23-224e728",
+      "v2026.09.23-5f08ac2",
+      "v2026.09.23-e98e716",
+      "v2026.09.22-c6a5566",
+    ]);
+  });
+
+  it("offers nothing to an instance already on the newest release", () => {
+    const state = computeUpdateState("v2026.09.23-224e728", null, parseReleases(asListed));
+    expect(state.available).toEqual([]);
+  });
+
+  it("offers exactly the newer ones to an instance behind", () => {
+    const state = computeUpdateState("v2026.09.23-e98e716", null, parseReleases(asListed));
+    expect(state.available.map((r) => r.version)).toEqual([
+      "v2026.09.23-224e728",
+      "v2026.09.23-5f08ac2",
+    ]);
+  });
+
+  it("sinks a release with no readable publication time instead of guessing its place", () => {
+    const parsed = parseReleases([
+      { tag_name: "v2026.09.24-0000000", body: "", published_at: "not a date" },
+      ...asListed,
+    ]);
+    expect(parsed.at(-1)?.version).toBe("v2026.09.24-0000000");
+  });
+});
