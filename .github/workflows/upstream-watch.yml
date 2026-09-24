@@ -1,9 +1,18 @@
 name: Upstream watch
 
 # The connectors scrape stores that change without warning, and the failure mode is a claim that
-# silently stops working. claabs/epicgames-freegames-node solves the same Epic problem and fixes
-# breakages fast, so its releases are an early warning we would otherwise get from our own
-# failures — days later, with less to go on.
+# silently stops working. Other projects solving the same Epic problem meet those changes first,
+# so what they change is an early warning we would otherwise get from our own failures — days
+# later, with less to go on.
+#
+# Two sources, because they cover different ground:
+#   - claabs/epicgames-freegames-node, by release: authentication, offers, EULA handling. It has
+#     not clicked through checkout since v5 (2023) — it hands the operator a link instead — and
+#     it ships from master, so its releases are rare.
+#   - vogler/free-games-claimer, by commit to epic-games.js on its `dev` branch: the checkout
+#     itself. Every 2026 checkout fix landed there (the "Add to library" rename, the new
+#     confirmation texts) and never reached a release or `main`, which is why watching releases
+#     alone missed all of them.
 #
 # This only opens an issue. Nothing here changes code: what upstream did still has to be read and
 # judged against our own implementation, which is deliberately different in places.
@@ -65,6 +74,49 @@ jobs:
             jq -r '.body // "(no notes)"' release.json | head -c 4000
             echo
             echo "</details>"
+          } > issue.md
+
+          gh issue create --title "$title" --body-file issue.md
+
+      - name: Note any change to vogler/free-games-claimer's Epic checkout
+        env:
+          CHECKOUT_UPSTREAM: vogler/free-games-claimer
+          CHECKOUT_BRANCH: dev
+          CHECKOUT_FILE: epic-games.js
+        run: |
+          set -euo pipefail
+
+          # A little more than the weekly schedule, so a commit landing just before a run is not
+          # missed by the next one; the title key below keeps the overlap from duplicating.
+          since=$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          if ! gh api "repos/$CHECKOUT_UPSTREAM/commits?sha=$CHECKOUT_BRANCH&path=$CHECKOUT_FILE&since=$since&per_page=20" \
+              > commits.json 2>/dev/null; then
+            echo "Could not read $CHECKOUT_UPSTREAM commits; nothing to do."
+            exit 0
+          fi
+
+          count=$(jq 'length' commits.json)
+          if [ "$count" -eq 0 ]; then
+            echo "No change to $CHECKOUT_FILE on $CHECKOUT_BRANCH since $since."
+            exit 0
+          fi
+
+          newest=$(jq -r '.[0].sha[0:7]' commits.json)
+          title="Upstream $CHECKOUT_UPSTREAM changed $CHECKOUT_FILE ($newest)"
+          if gh issue list --search "$title in:title" --state all --json title --jq '.[].title' \
+              | grep -Fxq "$title"; then
+            echo "Already tracked: $title"
+            exit 0
+          fi
+
+          {
+            echo "\`$CHECKOUT_FILE\` changed on \`$CHECKOUT_BRANCH\` upstream ($count commit(s) since $since)."
+            echo
+            echo "This is where Epic checkout fixes land first. Compare against"
+            echo "\`packages/connectors/src/epic/checkout.ts\` and \`driver.ts\`: a change here often"
+            echo "means a claim of ours is about to start failing, or already has."
+            echo
+            jq -r '.[] | "- [\(.sha[0:7])](\(.html_url)) \(.commit.author.date[0:10]) — \(.commit.message | split("\n")[0])"' commits.json
           } > issue.md
 
           gh issue create --title "$title" --body-file issue.md
